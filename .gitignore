@@ -1,0 +1,116 @@
+# ============================================================
+# Windsor RF ML — .gitignore
+# Large data files live in GCS bucket: windsor-gcs
+# ============================================================
+
+# ----- Large data files (stored in GCS, not GitHub) --------
+h3_complete_features_windsor.csv
+h3_complete_features_windsor_BACKUP.csv
+h3_dsm_clutter_database.csv
+h3_dem_database.csv
+h3_clutter_database.csv
+h3_clutter_classes_database.csv
+h3_clutter_class_percentages.csv
+h3_dsm_sample.csv
+comprehensive_rsrp_all_46_sites.csv
+comprehensive_rsrp_all_46_sites_NO_WATER.csv
+dataset.csv
+dataset_residuals.csv
+baseline_rsrp_all_towers.csv
+baseline_rsrp_with_pycraf.csv
+baseline_rsrp_with_pycraf_BEST_SERVER.csv
+missing_sites_with_pycraf.csv
+pycraf_predictions_checkpoint.csv
+best_server_checkpoint.csv
+test_predictions*.csv
+test_predictions*.geojson
+antenna_patterns_merged.csv
+
+# ----- Development / scratch folders -----------------------
+Cline/
+Testing/
+
+# ----- One-off development scripts -------------------------
+fix_*.py
+patch_*.py
+check_*.py
+verify_*.py
+augment_*.py
+add_*.py
+create_*.py
+generate_*.py
+rename_*.py
+extract_*.py
+list_*.py
+visualize_*.py
+analyze_*.py
+temp_*.py
+debug_*.py
+theoretical_*.py
+rf_design_tool_app.py
+
+# ----- Test / one-off scripts in root ----------------------
+test_*.py
+test_*.html
+git_init.bat
+
+# ----- Dev scripts accidentally inside site_deployment_demo -
+site_deployment_demo/finalize_html.py
+site_deployment_demo/find_zeros.py
+site_deployment_demo/_check_sites.py
+site_deployment_demo/fix_*.py
+site_deployment_demo/patch_*.py
+site_deployment_demo/check_*.py
+
+# ----- Notebooks and reports (not for deployment) ----------
+*.ipynb
+*.pdf
+README_AUGMENTATION.md
+H3_DSM_DATABASE_README.md
+OVERNIGHT_RUN_INSTRUCTIONS.md
+RF_Designer_Plan.md
+feature_analysis_for_predictions.md
+
+# ----- Output images and exports ---------------------------
+*.png
+site_deployment_demo/exports/
+exports/
+
+# ----- Server logs -----------------------------------------
+server_out*.txt
+server_err*.txt
+
+# ----- Python cache ----------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ----- Virtual environments --------------------------------
+venv/
+.venv/
+env/
+ENV/
+
+# ----- Environment files (secrets) -------------------------
+.env
+.env.*
+*.env
+
+# ----- OS files --------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ----- IDE files -------------------------------------------
+.vscode/settings.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ----- Temporary files -------------------------------------
+*.tmp
+*.bak
+*.swp
+*~

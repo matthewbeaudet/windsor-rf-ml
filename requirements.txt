@@ -1,0 +1,12 @@
+flask
+flask-cors
+gunicorn
+lightgbm>=3.3
+joblib>=1.1
+numpy>=1.21
+pandas>=1.3
+h3>=3.7
+pycraf>=0.29
+rasterio
+shapely
+google-cloud-storage

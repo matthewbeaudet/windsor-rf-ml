@@ -1,0 +1,54 @@
+feature,importance
+bearing_cos,3309
+bearing_sin,3045
+bearing_azimuth_sin,2970
+pycraf_d_lr,2432
+clutter_min_height,2422
+bearing_azimuth_cos,2269
+elevation_ue,2238
+elevation_diff_log,2143
+h_attenuation,2059
+downtilt_projection_distance,2051
+dsm_first_block_m,2040
+clutter_mean_height,1960
+dsm_max_excess_m,1951
+pycraf_eps_pt,1951
+Antenna height,1909
+clutter_p95_height,1695
+pycraf_L_ba,1622
+Antenna EDT,1615
+clutter_std_height,1607
+clutter_max_height,1515
+clutter_height_range,1310
+distance_los,1273
+pycraf_d_lt,1272
+Antenna MDT,1211
+dsm_los_ratio,1197
+Tree_pct,1155
+pycraf_eps_pr,1056
+Building_count,1008
+within_3db_horizontal,1002
+distance_3d_log,923
+Building_pct,665
+within_vbw_shadow,523
+Industry_count,491
+pycraf_L_bfsg,468
+Industry_pct,341
+within_3db_beam,328
+pycraf_L_bd,313
+pycraf_L_b0p,294
+Gain,254
+HBW,232
+VBW,230
+tree_density_per_km2,215
+outdoor,151
+pycraf_L_bs,148
+indoor_proportion,106
+v_attenuation,82
+dsm_los_binary,52
+RS dBm,50
+Forest_pct,44
+outdoor_proportion,36
+pycraf_L_b,27
+carrier_bw,0
+downlink_freq,0

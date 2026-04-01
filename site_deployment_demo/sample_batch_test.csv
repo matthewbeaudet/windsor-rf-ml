@@ -1,0 +1,7 @@
+site_name,lat,lon,height
+Downtown_20m,42.3149,-83.0364,20
+Downtown_25m,42.3149,-83.0364,25
+Downtown_30m,42.3149,-83.0364,30
+Eastside_Auto,42.3416,-82.9350,auto
+Westside_15m,42.2890,-83.0710,15
+Southside_Auto,42.3022,-83.0286,auto

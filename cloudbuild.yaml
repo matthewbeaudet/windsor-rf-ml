@@ -1,0 +1,64 @@
+# ============================================================
+# Cloud Build CI/CD Pipeline — Windsor RF ML
+# Triggered automatically on every push to the main branch.
+#
+# Pipeline:
+#   1. Build Docker image
+#   2. Push to Artifact Registry
+#   3. Deploy to Cloud Run (northamerica-northeast1)
+#
+# Prerequisites (one-time GCP setup):
+#   - Enable APIs: Cloud Build, Cloud Run, Artifact Registry, Cloud Storage
+#   - Connect GitHub repo to Cloud Build in the GCP console
+#   - Grant Cloud Build service account the Cloud Run Admin role
+#   - Create GCS bucket: windsor-gcs with the data files (see README.md)
+# ============================================================
+
+steps:
+  # Step 1: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:$COMMIT_SHA'
+      - '-t'
+      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:latest'
+      - '.'
+
+  # Step 2: Push the image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:$COMMIT_SHA'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:latest'
+
+  # Step 3: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'windsor-rf-ml'
+      - '--image=northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:$COMMIT_SHA'
+      - '--region=northamerica-northeast1'
+      - '--platform=managed'
+      - '--memory=8Gi'
+      - '--cpu=4'
+      - '--min-instances=1'
+      - '--max-instances=5'
+      - '--timeout=300'
+      - '--concurrency=10'
+      - '--set-env-vars=GCS_BUCKET=windsor-gcs'
+      - '--allow-unauthenticated'
+
+images:
+  - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:$COMMIT_SHA'
+  - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
