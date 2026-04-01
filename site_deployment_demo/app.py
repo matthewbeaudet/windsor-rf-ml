@@ -18,8 +18,14 @@ from api.site_predictor import SitePredictor
 app = Flask(__name__)
 CORS(app)  # Enable CORS for development
 
-# Initialize predictor
-predictor = SitePredictor()
+# Lazy-initialize predictor — loaded on first request so Cloud Run can bind the port first
+predictor = None
+
+def _get_predictor():
+    global predictor
+    if predictor is None:
+        predictor = SitePredictor()
+    return predictor
 
 @app.route('/')
 def index():
@@ -78,7 +84,7 @@ def predict_site():
             print(f"Predicting site at ({lat:.4f}, {lon:.4f}), height={height}m, zoom={zoom} → H3 res {h3_res}, radius={radius}m")
 
         # Run prediction
-        result = predictor.predict_site_deployment(
+        result = _get_predictor().predict_site_deployment(
             site_lat=lat,
             site_lon=lon,
             site_height=height,
@@ -113,7 +119,7 @@ def _get_baseline_with_coords():
     if _baseline_with_coords is None:
         import h3 as h3lib
         print("Building baseline coordinate index...")
-        df = predictor.baseline.copy()
+        df = _get_predictor().baseline.copy()
         coords = [h3lib.cell_to_latlng(idx) for idx in df['h3_index']]
         df['lat'] = [round(c[0], 5) for c in coords]
         df['lon'] = [round(c[1], 5) for c in coords]
@@ -230,7 +236,7 @@ def search_candidates():
 
         # env_features is indexed by h3_index, no lat/lon columns
         # Compute lat/lon for all bins via H3 (vectorized via numpy)
-        env_features = predictor.env_features  # DataFrame indexed by h3_index
+        env_features = _get_predictor().env_features  # DataFrame indexed by h3_index
 
         if 'clutter_mean_height' not in env_features.columns:
             return jsonify({'error': 'clutter_mean_height not available in environmental features'}), 500
@@ -380,7 +386,7 @@ def batch_predict():
                 
                 print(f"  [{row_idx+1}/{len(df)}] Predicting: {site_name} at ({lat:.4f}, {lon:.4f}), h={height if height else 'auto'}...")
                 
-                result = predictor.predict_site_deployment(
+                result = _get_predictor().predict_site_deployment(
                     site_lat=lat,
                     site_lon=lon,
                     site_height=height,
@@ -522,7 +528,7 @@ def height_sweep():
         results = []
         for h in heights:
             print(f"  Height sweep: {h}m at ({lat:.4f},{lon:.4f}), EDT={edt}°")
-            result = predictor.predict_site_deployment(
+            result = _get_predictor().predict_site_deployment(
                 site_lat=lat,
                 site_lon=lon,
                 site_height=h,
