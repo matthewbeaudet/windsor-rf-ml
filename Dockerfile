@@ -27,5 +27,7 @@ ENV PORT 8080
 ENV PYTHONUNBUFFERED True
 
 # 7. Launch the app with Gunicorn
+# Run from inside site_deployment_demo/ so relative imports (api.site_predictor) work correctly
 # --timeout 0 is critical because RF path-loss math can take several seconds
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 site_deployment_demo.app:app
+WORKDIR /app/site_deployment_demo
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 app:app
