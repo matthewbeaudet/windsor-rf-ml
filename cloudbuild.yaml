@@ -55,7 +55,7 @@ steps:
       - '--max-instances=5'
       - '--timeout=300'
       - '--concurrency=10'
-      - '--set-env-vars=GCS_BUCKET=windsor-gcs'
+      - '--set-env-vars=GCS_BUCKET=windsor-rf-ml-data'
       - '--allow-unauthenticated'
 
 images:
