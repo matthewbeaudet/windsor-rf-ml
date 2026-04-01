@@ -14,13 +14,16 @@
 #   - Create GCS bucket: windsor-gcs with the data files (see README.md)
 # ============================================================
 
+substitutions:
+  _TAG: 'latest'
+
 steps:
   # Step 1: Build the Docker image
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
       - '-t'
-      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:$COMMIT_SHA'
+      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:${_TAG}'
       - '-t'
       - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:latest'
       - '.'
@@ -29,7 +32,7 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:$COMMIT_SHA'
+      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:${_TAG}'
 
   - name: 'gcr.io/cloud-builders/docker'
     args:
@@ -43,7 +46,7 @@ steps:
       - 'run'
       - 'deploy'
       - 'windsor-rf-ml'
-      - '--image=northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:$COMMIT_SHA'
+      - '--image=northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:${_TAG}'
       - '--region=northamerica-northeast1'
       - '--platform=managed'
       - '--memory=8Gi'
@@ -56,7 +59,7 @@ steps:
       - '--allow-unauthenticated'
 
 images:
-  - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:$COMMIT_SHA'
+  - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:${_TAG}'
   - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:latest'
 
 options:
