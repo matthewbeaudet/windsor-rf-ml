@@ -17,8 +17,8 @@ import h3
 # This block downloads the large data files from GCS to /tmp/ once at startup.
 # When running locally, GCS_BUCKET is not set and this block is skipped entirely.
 
-_GCS_BUCKET = os.environ.get("GCS_BUCKET", "windsor-gcs")
-_GCS_PREFIX = "windsor"  # files live at gs://windsor-gcs/windsor/<filename>
+_GCS_BUCKET = os.environ.get("GCS_BUCKET", "windsor-rf-ml-data")
+_GCS_PREFIX = ""  # files live at gs://windsor-rf-ml-data/<filename> (root level)
 
 # Map of GCS object name → local destination path
 _GCS_FILES = {
@@ -27,7 +27,7 @@ _GCS_FILES = {
     "h3_dem_database.csv":                 "/tmp/h3_dem_database.csv",
     "comprehensive_rsrp_all_46_sites.csv": "/tmp/comprehensive_rsrp_all_46_sites.csv",
     "dataset.csv":                         "/tmp/dataset.csv",
-    "Cline/missing_sites_dataset.csv":     "/tmp/missing_sites_dataset.csv",
+    "missing_sites_dataset.csv":           "/tmp/missing_sites_dataset.csv",
 }
 
 
@@ -44,12 +44,13 @@ def _download_from_gcs():
         from google.cloud import storage
         client = storage.Client()
         bucket = client.bucket(_GCS_BUCKET)
-        print(f"GCS startup download from gs://{_GCS_BUCKET}/{_GCS_PREFIX}/")
+        print(f"GCS startup download from gs://{_GCS_BUCKET}/")
         for gcs_name, local_path in _GCS_FILES.items():
             if Path(local_path).exists():
                 print(f"  ✓ Already present: {local_path}")
                 continue
-            blob_name = f"{_GCS_PREFIX}/{gcs_name}"
+            # Build blob path: if prefix is empty use filename directly, else prefix/filename
+            blob_name = f"{_GCS_PREFIX}/{gcs_name}" if _GCS_PREFIX else gcs_name
             blob = bucket.blob(blob_name)
             print(f"  ↓ Downloading gs://{_GCS_BUCKET}/{blob_name} → {local_path}")
             blob.download_to_filename(local_path)
