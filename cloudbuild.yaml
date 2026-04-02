@@ -56,7 +56,20 @@ steps:
       - '--timeout=300'
       - '--concurrency=10'
       - '--set-env-vars=GCS_BUCKET=windsor-rf-ml-data'
-      - '--allow-unauthenticated'
+      - '--no-allow-unauthenticated'
+
+  # Step 4: Grant invoker access to TELUS org users
+  # (org policy blocks allUsers; domain:telus.com is allowed within the org constraint)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'services'
+      - 'add-iam-policy-binding'
+      - 'windsor-rf-ml'
+      - '--region=northamerica-northeast1'
+      - '--member=domain:telus.com'
+      - '--role=roles/run.invoker'
 
 images:
   - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:${_TAG}'
