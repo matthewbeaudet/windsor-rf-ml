@@ -90,8 +90,8 @@ class PredictionEngine:
         # Align features with model expectations
         X = self._align_features(features_df)
         
-        # Predict RSRP
-        predictions = self.model.predict(X)
+        # Predict RSRP — use native booster to avoid sklearn wrapper version issues
+        predictions = self.model.booster_.predict(X)
         features_df['predicted_rsrp'] = predictions
         
         # Group by H3 bin and find best serving sector
