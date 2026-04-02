@@ -1,7 +1,7 @@
 flask
 flask-cors
 gunicorn
-lightgbm>=3.3
+lightgbm==4.6.0
 joblib>=1.1
 numpy>=1.21
 pandas>=1.3
