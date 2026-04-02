@@ -191,9 +191,64 @@
         .leaflet-popup-content strong {
             color: #2c3e50;
         }
+
+        /* ── Terminal loading screen ── */
+        #loading-screen {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: #0d1117;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.6s ease;
+        }
+        #loading-screen.fade-out {
+            opacity: 0;
+            pointer-events: none;
+        }
+        #terminal {
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            color: #00ff88;
+            width: min(640px, 90vw);
+            padding: 28px;
+            border: 1px solid rgba(0,255,136,0.25);
+            background: #0d1117;
+        }
+        #terminal-header {
+            color: #ffffff;
+            font-size: 15px;
+            font-weight: bold;
+            border-bottom: 1px solid rgba(0,255,136,0.25);
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+            letter-spacing: 3px;
+        }
+        #terminal-lines div {
+            margin: 5px 0;
+            line-height: 1.5;
+        }
+        #terminal-lines .err { color: #ff4444; }
+        #terminal-cursor {
+            display: inline-block;
+            animation: blink 1s step-end infinite;
+            color: #00ff88;
+            margin-left: 2px;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
     </style>
 </head>
 <body>
+    <!-- Terminal-style loading overlay — removed once backend is ready -->
+    <div id="loading-screen">
+        <div id="terminal">
+            <div id="terminal-header">WINDSOR RF ML &nbsp;//&nbsp; SYSTEM BOOT</div>
+            <div id="terminal-lines"></div>
+            <span id="terminal-cursor">█</span>
+        </div>
+    </div>
+
     <div id="map"></div>
     
     <div id="info-panel">
@@ -535,6 +590,51 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     
     <script>
+        // ── Loading screen: poll /api/status until backend is ready ──────────
+        (function () {
+            const screen = document.getElementById('loading-screen');
+            const lines  = document.getElementById('terminal-lines');
+            const cursor = document.getElementById('terminal-cursor');
+            let lastCount = 0;
+
+            function addLine(text, isErr) {
+                const d = document.createElement('div');
+                if (isErr) d.classList.add('err');
+                d.textContent = text;
+                lines.appendChild(d);
+                lines.scrollTop = lines.scrollHeight;
+            }
+
+            function poll() {
+                fetch('/api/status')
+                    .then(r => r.json())
+                    .then(data => {
+                        const newLines = data.messages.slice(lastCount);
+                        newLines.forEach(msg => addLine(msg, false));
+                        lastCount = data.messages.length;
+
+                        if (data.error) {
+                            addLine('> FATAL: ' + data.error, true);
+                            cursor.style.display = 'none';
+                            return;
+                        }
+                        if (data.ready) {
+                            addLine('> Map ready. Click anywhere to begin.', false);
+                            cursor.style.display = 'none';
+                            setTimeout(function () {
+                                screen.classList.add('fade-out');
+                                setTimeout(function () { screen.remove(); }, 700);
+                            }, 900);
+                        } else {
+                            setTimeout(poll, 1000);
+                        }
+                    })
+                    .catch(function () { setTimeout(poll, 2000); });
+            }
+
+            poll();
+        })();
+
         // Initialize map centered on Windsor, Ontario
         const map = L.map('map').setView([42.3149, -83.0364], 13);
         

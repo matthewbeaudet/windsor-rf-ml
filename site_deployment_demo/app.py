@@ -7,6 +7,7 @@ from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 import sys
 import io
+import threading
 import pandas as pd
 from pathlib import Path
 
@@ -18,13 +19,34 @@ from api.site_predictor import SitePredictor
 app = Flask(__name__)
 CORS(app)  # Enable CORS for development
 
-# Lazy-initialize predictor — loaded on first request so Cloud Run can bind the port first
+# ── Startup initialization ────────────────────────────────────────────────────
+# Predictor is loaded in a background thread so Flask can bind the port and
+# serve the loading screen immediately. _startup_log streams progress to the UI.
+
 predictor = None
+_startup_log = []
+_startup_ready = False
+_startup_error = None
+
+def _init_predictor_background():
+    global predictor, _startup_ready, _startup_error
+    try:
+        _startup_log.append('> Initializing Windsor RF ML Tool...')
+        _startup_log.append('> Loading ML models and environmental data...')
+        predictor = SitePredictor()
+        _startup_log.append('> Baseline network loaded.')
+        _startup_log.append('> System ready.')
+        _startup_ready = True
+    except Exception as e:
+        _startup_error = str(e)
+        _startup_log.append(f'> ERROR: {e}')
+
+threading.Thread(target=_init_predictor_background, daemon=True).start()
 
 def _get_predictor():
-    global predictor
     if predictor is None:
-        predictor = SitePredictor()
+        from flask import abort
+        abort(503, description="System still initializing — please wait.")
     return predictor
 
 @app.route('/')
@@ -468,6 +490,16 @@ def batch_predict():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/status', methods=['GET'])
+def startup_status():
+    """Startup progress — polled by the loading screen."""
+    return jsonify({
+        'ready': _startup_ready,
+        'messages': _startup_log,
+        'error': _startup_error,
+    })
 
 
 @app.route('/api/health', methods=['GET'])
