@@ -49,7 +49,7 @@ steps:
       - '--image=northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:${_TAG}'
       - '--region=northamerica-northeast1'
       - '--platform=managed'
-      - '--memory=32Gi'
+      - '--memory=16Gi'
       - '--cpu=4'
       - '--min-instances=1'
       - '--max-instances=5'
