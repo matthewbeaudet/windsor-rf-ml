@@ -369,7 +369,6 @@
                 </table>
                 <div style="display:flex; gap:6px; margin-top:8px;">
                     <button onclick="downloadSweepCSV()" style="flex:1; padding:5px; background:#2980b9; color:#fff; border:none; border-radius:4px; font-size:12px; cursor:pointer;">⬇ CSV</button>
-                    <button onclick="exportSweepHTML()" style="flex:1; padding:5px; background:#8e44ad; color:#fff; border:none; border-radius:4px; font-size:12px; cursor:pointer;">📤 Export Map</button>
                     <button onclick="clearSweep()" style="flex:1; padding:5px; background:#e74c3c; color:#fff; border:none; border-radius:4px; font-size:12px; cursor:pointer;">🗑 Clear</button>
                 </div>
             </div>
@@ -1939,112 +1938,6 @@ Southside_Auto,42.3022,-83.0286,auto`;
             updateLegend(mode === 'improvement' ? 'improvement' : 'coverage');
         }
 
-        // ─── Export sweep results as a standalone Leaflet HTML file ──────────
-        // The user can open it in any browser, zoom/pan freely, and screenshot at
-        // any resolution. No canvas capture issues.
-        function exportSweepHTML() {
-            if (!sweepResults.length) { alert('Run a sweep first.'); return; }
-            const viewMode = document.querySelector('input[name="sweep-view"]:checked');
-            const mode = viewMode ? viewMode.value : 'newsite';
-            const center = [sweepLat, sweepLon];
-            const zoom = map.getZoom();
-
-            // Collect all active heights' GeoJSON data for the selected view mode
-            const layers = [];
-            sweepResults.forEach(r => {
-                let geo = null;
-                if (mode === 'improvement') {
-                    geo = r.geojson ? {
-                        type: 'FeatureCollection',
-                        features: r.geojson.features.filter(f => f.properties.is_improved || f.properties.improvement_db >= 3)
-                    } : null;
-                } else if (mode === 'coverage') {
-                    geo = r.geojson;
-                } else {
-                    geo = r.footprint_geojson || r.geojson;
-                }
-                if (geo && geo.features && geo.features.length) {
-                    layers.push({ height: r.height, geo, mode });
-                }
-            });
-
-            const geoDataJson = JSON.stringify(layers);
-            const modeLabel = mode === 'improvement' ? 'Improvement (dB gain)'
-                            : mode === 'coverage'    ? 'Combined Coverage (RSRP)'
-                            :                          'New Site RSRP Predictions';
-
-            const html = `<!DOCTYPE html>
-<html><head>
-<meta charset="UTF-8">
-<title>Sweep Export — ${sweepLat.toFixed(4)}, ${sweepLon.toFixed(4)}</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<style>body{margin:0;} #map{height:100vh;width:100%;}</style>
-</head><body>
-<div id="map"></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
-<script>
-const map = L.map('map').setView(${JSON.stringify(center)}, ${zoom});
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-  {attribution:'© OpenStreetMap contributors', maxZoom:19}).addTo(map);
-
-function rsrpToHex(r){
-  if(r>-81.5)return'#800000';if(r>-88.5)return'#ff0000';if(r>-95.5)return'#ffff80';
-  if(r>-102.5)return'#80ff80';if(r>-109.5)return'#0080ff';if(r>-121.5)return'#ff80c0';
-  return'#c0c0c0';
-}
-function impColor(d){return d>6?'#00ff00':d>4?'#ffff00':'#ff8800';}
-
-const layers=${geoDataJson};
-const mode='${mode}';
-
-layers.forEach(function(l){
-  L.geoJSON(l.geo,{
-    style:function(f){
-      const p=f.properties;
-      let fill = mode==='improvement' ? impColor(p.improvement_db)
-               : mode==='coverage'    ? rsrpToHex(p.final_rsrp)
-               :                        rsrpToHex(p.new_site_rsrp);
-      return{fillColor:fill,fillOpacity:0.85,color:'#333',weight:0.3};
-    },
-    onEachFeature:function(f,lyr){
-      const p=f.properties;
-      lyr.bindPopup('<b>'+l.height+'m</b><br>'
-        +(mode==='improvement'?'Gain: '+p.improvement_db+' dB<br>':'')
-        +'Baseline: '+p.baseline_rsrp+' dBm<br>'
-        +(p.new_site_rsrp?'New RSRP: '+p.new_site_rsrp+' dBm':''));
-    }
-  }).addTo(map);
-});
-
-// Site pin
-L.circleMarker(${JSON.stringify(center)},{radius:8,fillColor:'#e74c3c',fillOpacity:0.9,color:'#fff',weight:2})
-  .bindPopup('<b>Sweep Site</b><br>${sweepLat.toFixed(4)}, ${sweepLon.toFixed(4)}<br>View: ${modeLabel}')
-  .addTo(map);
-
-// Legend
-const legend=L.control({position:'bottomright'});
-legend.onAdd=function(){
-  const d=L.DomUtil.create('div','');
-  d.style.cssText='background:white;padding:8px;border-radius:5px;font-size:12px;line-height:1.6;';
-  ${mode === 'improvement'
-    ? `d.innerHTML='<b>Improvement</b><br><span style="color:#00ff00;">■</span> >6dB<br><span style="color:#ffff00;">■</span> 4-6dB<br><span style="color:#ff8800;">■</span> 3-4dB';`
-    : `d.innerHTML='<b>RSRP</b><br><span style="color:#800000;">■</span> >-81.5<br><span style="color:#ff0000;">■</span> -88.5<br><span style="color:#ffff80;">■</span> -95.5<br><span style="color:#80ff80;">■</span> -102.5<br><span style="color:#0080ff;">■</span> -109.5<br><span style="color:#ff80c0;">■</span> -121.5<br><span style="color:#c0c0c0;">■</span> poor';`
-  }
-  return d;
-};
-legend.addTo(map);
-<\/script>
-</body></html>`;
-
-            const blob = new Blob([html], { type: 'text/html' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'sweep_' + sweepLat.toFixed(4) + '_' + sweepLon.toFixed(4) + '_' + mode + '.html';
-            a.click();
-            URL.revokeObjectURL(url);
-            console.log('Exported sweep HTML: ' + layers.length + ' height layers, mode=' + mode);
-        }
 
         // ─── Clear all sweep layers and reset sweep state ────────────────────
         function clearSweep() {
