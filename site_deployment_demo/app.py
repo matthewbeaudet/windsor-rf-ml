@@ -182,6 +182,16 @@ def baseline_coverage():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/ised_sites', methods=['GET'])
+def ised_sites():
+    """Return deduplicated ISED colocation sites for Windsor."""
+    import json as _json
+    ised_path = Path(__file__).parent / 'static' / 'ised_sites.json'
+    with open(ised_path) as f:
+        sites = _json.load(f)
+    return jsonify({'sites': sites})
+
+
 @app.route('/api/sites', methods=['GET'])
 def get_sites():
     """

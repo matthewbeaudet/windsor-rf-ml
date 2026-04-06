@@ -473,6 +473,10 @@
             <div id="poor-coverage-loading" style="display:none; font-size:12px; color:#888; margin-top:3px;">
                 Loading poor coverage...
             </div>
+            <label style="margin-top:6px;">
+                <input type="checkbox" id="ised-toggle">
+                ISED Database Colocation Sites
+            </label>
             <label style="margin-top:6px;" title="Only visible at zoom ≥ 15">
                 <input type="checkbox" id="clutter-toggle">
                 Show Building Heights <span style="font-size:11px; color:#888;">(zoom ≥ 15)</span>
@@ -982,6 +986,62 @@
 
         // Load sites on startup (checkbox is pre-checked)
         loadSites();
+
+        // ─── ISED Colocation Sites Layer ──────────────────────────────────────
+        let isedLayer = null;
+
+        const licenseeColors = {
+            'TELUS':    '#4a154b',
+            'Rogers':   '#d62b1f',
+            'Bell':     '#003da5',
+            'Freedom':  '#00a651',
+            'Cogeco':   '#f7941d',
+            'Xplornet': '#7b2d8b',
+        };
+
+        function isedColor(licensees) {
+            if (licensees.length === 1) return licenseeColors[licensees[0]] || '#555';
+            return '#333'; // multi-licensee = dark grey
+        }
+
+        async function loadIsedSites() {
+            try {
+                const resp = await fetch('/api/ised_sites');
+                const data = await resp.json();
+                const markers = data.sites.map(s => {
+                    const color = isedColor(s.licensees);
+                    const icon = L.divIcon({
+                        className: '',
+                        html: `<div style="
+                            width:14px; height:14px;
+                            background:${color}; border:2px solid #fff;
+                            border-radius:3px;
+                            box-shadow:0 1px 4px rgba(0,0,0,0.5);"></div>`,
+                        iconSize: [14, 14],
+                        iconAnchor: [7, 7],
+                        popupAnchor: [0, -10]
+                    });
+                    return L.marker([s.lat, s.lon], { icon })
+                        .bindPopup(
+                            `<strong>ISED Colocation Site</strong><br>` +
+                            `Licensee(s): <strong>${s.licensees.join(', ')}</strong><br>` +
+                            `Technologies: ${s.technologies.join(', ') || '—'}<br>` +
+                            `Bands: ${s.bands.join(', ') || '—'}<br>` +
+                            `Licences at this location: ${s.sectors}`
+                        );
+                });
+                isedLayer = L.layerGroup(markers);
+            } catch(e) { console.error('ISED sites error:', e); }
+        }
+
+        document.getElementById('ised-toggle').addEventListener('change', async function() {
+            if (this.checked) {
+                if (!isedLayer) await loadIsedSites();
+                if (isedLayer) isedLayer.addTo(map);
+            } else {
+                if (isedLayer) map.removeLayer(isedLayer);
+            }
+        });
 
         // ─── Result Layer Builders ────────────────────────────────────────────
         // All result modes use canvas circleMarkers (same as baseline), so they
