@@ -502,6 +502,105 @@ def startup_status():
     })
 
 
+# Cached clutter layer index: DataFrame with lat/lon/median/p95, median > 6m
+_clutter_layer_index = None
+
+def _get_clutter_layer_index():
+    """Build and cache the clutter height index (median > 6m bins only)."""
+    global _clutter_layer_index
+    if _clutter_layer_index is not None:
+        return _clutter_layer_index
+
+    import h3 as h3lib
+    env = _get_predictor().env_features
+    needed = {'clutter_median_height', 'clutter_p95_height'}
+    if not needed.issubset(env.columns):
+        return None
+
+    df = env[env['clutter_median_height'] > 6][['clutter_median_height', 'clutter_p95_height']].copy()
+    coords = [h3lib.cell_to_latlng(idx) for idx in df.index]
+    df['lat'] = [round(c[0], 5) for c in coords]
+    df['lon'] = [round(c[1], 5) for c in coords]
+    df = df.rename(columns={'clutter_median_height': 'median', 'clutter_p95_height': 'p95'})
+    df[['median', 'p95']] = df[['median', 'p95']].round(1)
+    _clutter_layer_index = df
+    print(f"  ✓ Clutter layer index built: {len(df):,} bins (median > 6m)")
+    return _clutter_layer_index
+
+
+@app.route('/api/clutter_heights', methods=['GET'])
+def clutter_heights():
+    """
+    Return clutter median + p95 heights for bins in the viewport where median > 6m.
+    Used by the high-zoom clutter height map layer.
+    """
+    try:
+        min_lat = float(request.args.get('min_lat', 42.2))
+        max_lat = float(request.args.get('max_lat', 42.4))
+        min_lon = float(request.args.get('min_lon', -83.2))
+        max_lon = float(request.args.get('max_lon', -82.9))
+
+        df = _get_clutter_layer_index()
+        if df is None:
+            return jsonify({'points': [], 'error': 'clutter columns not available'})
+
+        mask = (
+            (df['lat'] >= min_lat) & (df['lat'] <= max_lat) &
+            (df['lon'] >= min_lon) & (df['lon'] <= max_lon)
+        )
+        vp = df[mask]
+        points = vp[['lat', 'lon', 'median', 'p95']].values.tolist()
+        print(f"  Clutter viewport: {len(points):,} bins")
+        return jsonify({'points': points})
+    except Exception as e:
+        print(f"Error in clutter_heights: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# Cached poor-coverage index: baseline bins with predicted_rsrp <= -109.5
+_poor_coverage_index = None
+
+def _get_poor_coverage_index():
+    """Build and cache the poor-coverage index (RSRP ≤ -109.5 dBm)."""
+    global _poor_coverage_index
+    if _poor_coverage_index is not None:
+        return _poor_coverage_index
+
+    import h3 as h3lib
+    df = _get_baseline_with_coords()
+    poor = df[df['predicted_rsrp'] <= -109.5][['lat', 'lon', 'predicted_rsrp']].copy()
+    poor = poor.rename(columns={'predicted_rsrp': 'rsrp'})
+    poor['rsrp'] = poor['rsrp'].round(1)
+    _poor_coverage_index = poor
+    print(f"  ✓ Poor coverage index built: {len(poor):,} bins (≤ -109.5 dBm)")
+    return _poor_coverage_index
+
+
+@app.route('/api/poor_coverage', methods=['GET'])
+def poor_coverage():
+    """
+    Return baseline bins with RSRP ≤ -109.5 dBm (poor + very poor) for the viewport.
+    """
+    try:
+        min_lat = float(request.args.get('min_lat', 42.2))
+        max_lat = float(request.args.get('max_lat', 42.4))
+        min_lon = float(request.args.get('min_lon', -83.2))
+        max_lon = float(request.args.get('max_lon', -82.9))
+
+        df = _get_poor_coverage_index()
+        mask = (
+            (df['lat'] >= min_lat) & (df['lat'] <= max_lat) &
+            (df['lon'] >= min_lon) & (df['lon'] <= max_lon)
+        )
+        vp = df[mask]
+        points = vp[['lat', 'lon', 'rsrp']].values.tolist()
+        print(f"  Poor coverage viewport: {len(points):,} bins")
+        return jsonify({'points': points})
+    except Exception as e:
+        print(f"Error in poor_coverage: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check endpoint"""

@@ -255,8 +255,11 @@
         <h2>Site Deployment Tool</h2>
         
         <div class="instruction">
-            <strong>Click anywhere</strong> on the map to test a potential site location. 
+            <strong>Click anywhere</strong> on the map to test a potential site location.
             The tool will show bins improved by <strong>≥3dB</strong>.
+        </div>
+        <div style="font-size:12px; color:#555; background:#eaf4ff; border:1px solid #b3d4f5; border-radius:5px; padding:6px 10px; margin-bottom:4px;">
+            📡 Band: <strong>2100 MHz</strong> (LTE B4/B1) &nbsp;·&nbsp; Windsor, ON
         </div>
 
         <!-- Mode toggle buttons -->
@@ -457,6 +460,20 @@
             </label>
             <div id="baseline-loading" style="display:none; font-size:12px; color:#888; margin-top:5px;">
                 Loading baseline coverage...
+            </div>
+            <label style="margin-top:6px;">
+                <input type="checkbox" id="poor-coverage-toggle">
+                Show Poor Coverage (≤ −109.5 dBm)
+            </label>
+            <div id="poor-coverage-loading" style="display:none; font-size:12px; color:#888; margin-top:3px;">
+                Loading poor coverage...
+            </div>
+            <label style="margin-top:6px;" title="Only visible at zoom ≥ 15">
+                <input type="checkbox" id="clutter-toggle">
+                Show Clutter Heights <span style="font-size:11px; color:#888;">(zoom ≥ 15)</span>
+            </label>
+            <div id="clutter-loading" style="display:none; font-size:12px; color:#888; margin-top:3px;">
+                Loading clutter heights...
             </div>
         </div>
         
@@ -758,6 +775,148 @@
             } else {
                 if (baselineLayer) { map.removeLayer(baselineLayer); baselineLayer = null; }
                 document.getElementById('baseline-loading').style.display = 'none';
+            }
+        });
+
+        // ─── Poor Coverage Layer (RSRP ≤ -109.5 dBm) ────────────────────────
+        let poorLayer = null;
+        let poorVisible = false;
+        let poorRefreshTimer = null;
+
+        async function refreshPoorLayer() {
+            if (!poorVisible) return;
+            const bounds = map.getBounds();
+            const params = new URLSearchParams({
+                min_lat: bounds.getSouth().toFixed(5),
+                max_lat: bounds.getNorth().toFixed(5),
+                min_lon: bounds.getWest().toFixed(5),
+                max_lon: bounds.getEast().toFixed(5),
+            });
+            document.getElementById('poor-coverage-loading').style.display = 'block';
+            try {
+                const resp = await fetch('/api/poor_coverage?' + params);
+                const data = await resp.json();
+                if (poorLayer) { map.removeLayer(poorLayer); poorLayer = null; }
+                if (!poorVisible) return;
+                const r = dotRadius();
+                const features = (data.points || []).map(p => ({
+                    type: 'Feature',
+                    geometry: { type: 'Point', coordinates: [p[1], p[0]] },
+                    properties: { rsrp: p[2] }
+                }));
+                poorLayer = L.geoJSON({ type: 'FeatureCollection', features }, {
+                    pointToLayer: function(feature, latlng) {
+                        return L.circleMarker(latlng, {
+                            radius: r, fillColor: '#c0c0c0', fillOpacity: 0.75,
+                            color: '#999', weight: 0.3
+                        });
+                    },
+                    onEachFeature: function(feature, layer) {
+                        layer.bindPopup(`<strong>Poor Coverage</strong><br>${feature.properties.rsrp} dBm`);
+                    }
+                }).addTo(map);
+                poorLayer.bringToBack();
+            } catch(e) { console.error('Poor coverage error:', e); }
+            finally { document.getElementById('poor-coverage-loading').style.display = 'none'; }
+        }
+
+        map.on('moveend zoomend', function() {
+            if (!poorVisible) return;
+            clearTimeout(poorRefreshTimer);
+            poorRefreshTimer = setTimeout(refreshPoorLayer, 300);
+        });
+
+        document.getElementById('poor-coverage-toggle').addEventListener('change', function() {
+            poorVisible = this.checked;
+            if (poorVisible) {
+                refreshPoorLayer();
+            } else {
+                if (poorLayer) { map.removeLayer(poorLayer); poorLayer = null; }
+                document.getElementById('poor-coverage-loading').style.display = 'none';
+            }
+        });
+
+        // ─── Clutter Height Layer (zoom ≥ 15, median > 6m) ───────────────────
+        let clutterLayer = null;
+        let clutterVisible = false;
+        let clutterRefreshTimer = null;
+        const CLUTTER_MIN_ZOOM = 15;
+
+        function clutterHeightColor(median) {
+            if (median > 20) return '#7b2d00';
+            if (median > 15) return '#c0392b';
+            if (median > 10) return '#e67e22';
+            return '#f1c40f';
+        }
+
+        async function refreshClutterLayer() {
+            if (!clutterVisible) return;
+            if (map.getZoom() < CLUTTER_MIN_ZOOM) {
+                if (clutterLayer) { map.removeLayer(clutterLayer); clutterLayer = null; }
+                return;
+            }
+            const bounds = map.getBounds();
+            const params = new URLSearchParams({
+                min_lat: bounds.getSouth().toFixed(5),
+                max_lat: bounds.getNorth().toFixed(5),
+                min_lon: bounds.getWest().toFixed(5),
+                max_lon: bounds.getEast().toFixed(5),
+            });
+            document.getElementById('clutter-loading').style.display = 'block';
+            try {
+                const resp = await fetch('/api/clutter_heights?' + params);
+                const data = await resp.json();
+                if (clutterLayer) { map.removeLayer(clutterLayer); clutterLayer = null; }
+                if (!clutterVisible) return;
+                const features = (data.points || []).map(p => ({
+                    type: 'Feature',
+                    geometry: { type: 'Point', coordinates: [p[1], p[0]] },
+                    properties: { median: p[2], p95: p[3] }
+                }));
+                clutterLayer = L.geoJSON({ type: 'FeatureCollection', features }, {
+                    pointToLayer: function(feature, latlng) {
+                        return L.circleMarker(latlng, {
+                            radius: dotRadius(),
+                            fillColor: clutterHeightColor(feature.properties.median),
+                            fillOpacity: 0.8, color: '#333', weight: 0.2
+                        });
+                    },
+                    onEachFeature: function(feature, layer) {
+                        layer.bindPopup(
+                            `<strong>Clutter Height</strong><br>` +
+                            `Median: <strong>${feature.properties.median} m</strong><br>` +
+                            `P95: ${feature.properties.p95} m`
+                        );
+                    }
+                }).addTo(map);
+            } catch(e) { console.error('Clutter layer error:', e); }
+            finally { document.getElementById('clutter-loading').style.display = 'none'; }
+        }
+
+        map.on('moveend zoomend', function() {
+            if (!clutterVisible) return;
+            clearTimeout(clutterRefreshTimer);
+            // Hide layer immediately if zooming out below threshold
+            if (map.getZoom() < CLUTTER_MIN_ZOOM) {
+                if (clutterLayer) { map.removeLayer(clutterLayer); clutterLayer = null; }
+                return;
+            }
+            clutterRefreshTimer = setTimeout(refreshClutterLayer, 300);
+        });
+
+        document.getElementById('clutter-toggle').addEventListener('change', function() {
+            clutterVisible = this.checked;
+            if (clutterVisible) {
+                if (map.getZoom() < CLUTTER_MIN_ZOOM) {
+                    alert('Zoom in to level 15 or higher to view clutter heights.');
+                    this.checked = false;
+                    clutterVisible = false;
+                    return;
+                }
+                refreshClutterLayer();
+            } else {
+                if (clutterLayer) { map.removeLayer(clutterLayer); clutterLayer = null; }
+                document.getElementById('clutter-loading').style.display = 'none';
             }
         });
 
