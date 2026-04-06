@@ -506,7 +506,7 @@ def startup_status():
 _clutter_layer_index = None
 
 def _get_clutter_layer_index():
-    """Build and cache the clutter height index (median > 6m bins only)."""
+    """Build and cache the building height index (median > 6m, Building_pct >= 75)."""
     global _clutter_layer_index
     if _clutter_layer_index is not None:
         return _clutter_layer_index
@@ -517,14 +517,17 @@ def _get_clutter_layer_index():
     if not needed.issubset(env.columns):
         return None
 
-    df = env[env['clutter_median_height'] > 6][['clutter_median_height', 'clutter_p95_height']].copy()
+    mask = env['clutter_median_height'] > 6
+    if 'Building_pct' in env.columns:
+        mask = mask & (env['Building_pct'] >= 75)
+    df = env[mask][['clutter_median_height', 'clutter_p95_height']].copy()
     coords = [h3lib.cell_to_latlng(idx) for idx in df.index]
     df['lat'] = [round(c[0], 5) for c in coords]
     df['lon'] = [round(c[1], 5) for c in coords]
     df = df.rename(columns={'clutter_median_height': 'median', 'clutter_p95_height': 'p95'})
     df[['median', 'p95']] = df[['median', 'p95']].round(1)
     _clutter_layer_index = df
-    print(f"  ✓ Clutter layer index built: {len(df):,} bins (median > 6m)")
+    print(f"  ✓ Building height index built: {len(df):,} bins (median > 6m, Building_pct ≥ 75%)")
     return _clutter_layer_index
 
 
