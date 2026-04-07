@@ -437,6 +437,13 @@
             </div>
         </div>
         
+        <button id="print-png-btn" onclick="printToPng()"
+            style="display:none; margin-top:8px; width:100%; padding:7px;
+                   background:#2c3e50; color:#fff; border:none; border-radius:5px;
+                   font-size:13px; font-weight:600; cursor:pointer;">
+            🖨 Print to PNG
+        </button>
+
         <div id="loading" style="display:none;">
             <div class="loading-spinner"></div>
             <p><strong>Calculating predictions...</strong></p>
@@ -612,6 +619,8 @@
     <!-- Leaflet.draw -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     
     <script>
         // ── Loading screen: poll /api/status until backend is ready ──────────
@@ -665,16 +674,23 @@
         // Add OpenStreetMap tiles
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors',
-            maxZoom: 19
+            maxZoom: 19,
+            crossOrigin: ''
         }).addTo(map);
         
+        // Shared canvas renderer for all result layers (ensures alignment with basemap for PNG export)
+        const resultRenderer = L.canvas({ padding: 0.5 });
+
         // Layers for result visualization
         let improvementLayer  = null;  // dB-gain coloring (green/yellow/orange)
         let coverageLayer     = null;  // final_rsrp RSRP coloring
         let newSiteLayer      = null;  // new_site_rsrp for all footprint bins
         let siteMarker = null;
-        let lastGeoJSON         = null; // improved-bins GeoJSON
-        let lastFootprintGeoJSON = null; // all footprint bins GeoJSON
+        let lastGeoJSON          = null;  // improved-bins GeoJSON
+        let lastFootprintGeoJSON = null;  // all footprint bins GeoJSON
+        let lastSiteHeight = null;
+        let lastSiteLat    = null;
+        let lastSiteLon    = null;
         
         // Custom icon for site marker
         const siteIcon = L.divIcon({
@@ -815,6 +831,7 @@
                 poorLayer = L.geoJSON({ type: 'FeatureCollection', features }, {
                     pointToLayer: function(feature, latlng) {
                         return L.circleMarker(latlng, {
+                            renderer: resultRenderer,
                             radius: r, fillColor: rsrpToHex(feature.properties.rsrp),
                             fillOpacity: 0.75, color: '#333', weight: 0.3
                         });
@@ -1058,20 +1075,18 @@
 
         function buildImprovementLayer(geojson) {
             if (improvementLayer) { map.removeLayer(improvementLayer); improvementLayer = null; }
-            // Only render bins that are actually improved (≥3dB)
             const improvedOnly = {
                 type: 'FeatureCollection',
                 features: geojson.features.filter(f => f.properties.is_improved)
             };
             improvementLayer = L.geoJSON(improvedOnly, {
-                style: function(feature) {
-                    return {
+                pointToLayer: function(feature, latlng) {
+                    return L.circleMarker(latlng, {
+                        renderer: resultRenderer,
+                        radius: dotRadius(),
                         fillColor: improvementColor(feature.properties.improvement_db),
-                        fillOpacity: 0.85,
-                        color: '#333',
-                        weight: 0.3,
-                        opacity: 0.5
-                    };
+                        fillOpacity: 0.85, color: '#333', weight: 0.3
+                    });
                 },
                 onEachFeature: function(feature, layer) {
                     const p = feature.properties;
@@ -1090,19 +1105,18 @@
         function buildCoverageLayer(geojson) {
             if (coverageLayer) { map.removeLayer(coverageLayer); coverageLayer = null; }
             coverageLayer = L.geoJSON(geojson, {
-                style: function(feature) {
-                    return {
+                pointToLayer: function(feature, latlng) {
+                    return L.circleMarker(latlng, {
+                        renderer: resultRenderer,
+                        radius: dotRadius(),
                         fillColor: rsrpToHex(feature.properties.final_rsrp),
-                        fillOpacity: 0.8,
-                        color: '#333',
-                        weight: 0.3,
-                        opacity: 0.5
-                    };
+                        fillOpacity: 0.8, color: '#333', weight: 0.3
+                    });
                 },
                 onEachFeature: function(feature, layer) {
                     const p = feature.properties;
                     layer.bindPopup(
-                        `<strong>📡 Updated Coverage</strong><br>` +
+                        `<strong>📡 NSB and Neighbours Bins</strong><br>` +
                         `Final RSRP: <strong>${p.final_rsrp} dBm</strong><br>` +
                         `Baseline RSRP: ${p.baseline_rsrp} dBm<br>` +
                         `Improvement: +${p.improvement_db} dB<br>` +
@@ -1115,19 +1129,18 @@
         function buildNewSiteLayer(geojson) {
             if (newSiteLayer) { map.removeLayer(newSiteLayer); newSiteLayer = null; }
             newSiteLayer = L.geoJSON(geojson, {
-                style: function(feature) {
-                    return {
+                pointToLayer: function(feature, latlng) {
+                    return L.circleMarker(latlng, {
+                        renderer: resultRenderer,
+                        radius: dotRadius(),
                         fillColor: rsrpToHex(feature.properties.new_site_rsrp),
-                        fillOpacity: 0.8,
-                        color: '#333',
-                        weight: 0.3,
-                        opacity: 0.5
-                    };
+                        fillOpacity: 0.8, color: '#333', weight: 0.3
+                    });
                 },
                 onEachFeature: function(feature, layer) {
                     const p = feature.properties;
                     layer.bindPopup(
-                        `<strong>📡 New Site Prediction</strong><br>` +
+                        `<strong>📡 New Site Build Prediction</strong><br>` +
                         `New Site RSRP: <strong>${p.new_site_rsrp} dBm</strong><br>` +
                         `Baseline RSRP: ${p.baseline_rsrp} dBm<br>` +
                         `Improvement: +${p.improvement_db} dB<br>` +
@@ -1285,6 +1298,9 @@
                 // Save GeoJSON for view switching
                 lastGeoJSON          = data.geojson;
                 lastFootprintGeoJSON = data.footprint_geojson;
+                lastSiteLat    = lat;
+                lastSiteLon    = lon;
+                lastSiteHeight = data.site_height || manualHeight;
 
                 // Default view = New Site RSRP predictions
                 document.querySelector('input[name="view-mode"][value="newsite"]').checked = true;
@@ -1312,6 +1328,7 @@
                 document.getElementById('cancel-btn').style.display = 'none';
                 document.getElementById('stats').style.display = 'block';
                 document.getElementById('clear-btn').style.display = 'block';
+                document.getElementById('print-png-btn').style.display = 'block';
                 
                 // Show notification if no improvements
                 if (data.stats.improved_bins === 0) {
@@ -1333,6 +1350,7 @@
             clearResults();
             document.getElementById('stats').style.display = 'none';
             document.getElementById('clear-btn').style.display = 'none';
+            document.getElementById('print-png-btn').style.display = 'none';
         });
         
         function clearResults() {
@@ -1342,6 +1360,8 @@
             if (newSiteLayer)     { map.removeLayer(newSiteLayer);     newSiteLayer     = null; }
             lastGeoJSON          = null;
             lastFootprintGeoJSON = null;
+            lastSiteLat = null; lastSiteLon = null; lastSiteHeight = null;
+            document.getElementById('print-png-btn').style.display = 'none';
 
             // Remove proposed site marker
             if (siteMarker) { map.removeLayer(siteMarker); siteMarker = null; }
@@ -1585,14 +1605,13 @@
         // Build coverage layer for a selection candidate (RSRP colours = default view)
         function buildSelectionImprovementLayer(geojson) {
             return L.geoJSON(geojson, {
-                style: function(feature) {
-                    return {
+                pointToLayer: function(feature, latlng) {
+                    return L.circleMarker(latlng, {
+                        renderer: resultRenderer,
+                        radius: dotRadius(),
                         fillColor: rsrpToHex(feature.properties.final_rsrp),
-                        fillOpacity: 0.8,
-                        color: '#333',
-                        weight: 0.3,
-                        opacity: 0.5
-                    };
+                        fillOpacity: 0.8, color: '#333', weight: 0.3
+                    });
                 },
                 onEachFeature: function(feature, layer) {
                     const p = feature.properties;
@@ -2034,9 +2053,9 @@ Southside_Auto,42.3022,-83.0286,auto`;
                         features: r.geojson.features.filter(f => f.properties.is_improved || f.properties.improvement_db >= 3)
                     } : null;
                     sweepLayers[r.height] = {
-                        imp: impGeoJSON && impGeoJSON.features.length ? L.geoJSON(impGeoJSON, {style: f => ({fillColor: f.properties.improvement_db>6?'#00ff00':f.properties.improvement_db>4?'#ffff00':'#ff8800', fillOpacity:0.85, color:'#333', weight:0.3})}) : null,
-                        cov: r.geojson ? L.geoJSON(r.geojson, {style: f => ({fillColor: rsrpToHex(f.properties.final_rsrp), fillOpacity:0.8, color:'#333', weight:0.3})}) : null,
-                        newsite: (r.footprint_geojson||r.geojson) ? L.geoJSON(r.footprint_geojson||r.geojson, {style: f => ({fillColor: rsrpToHex(f.properties.new_site_rsrp), fillOpacity:0.8, color:'#333', weight:0.3})}) : null,
+                        imp: impGeoJSON && impGeoJSON.features.length ? L.geoJSON(impGeoJSON, {pointToLayer: function(f,ll){ return L.circleMarker(ll,{renderer:resultRenderer,radius:dotRadius(),fillColor:f.properties.improvement_db>6?'#00ff00':f.properties.improvement_db>4?'#ffff00':'#ff8800',fillOpacity:0.85,color:'#333',weight:0.3}); }}) : null,
+                        cov: r.geojson ? L.geoJSON(r.geojson, {pointToLayer: function(f,ll){ return L.circleMarker(ll,{renderer:resultRenderer,radius:dotRadius(),fillColor:rsrpToHex(f.properties.final_rsrp),fillOpacity:0.8,color:'#333',weight:0.3}); }}) : null,
+                        newsite: (r.footprint_geojson||r.geojson) ? L.geoJSON(r.footprint_geojson||r.geojson, {pointToLayer: function(f,ll){ return L.circleMarker(ll,{renderer:resultRenderer,radius:dotRadius(),fillColor:rsrpToHex(f.properties.new_site_rsrp),fillOpacity:0.8,color:'#333',weight:0.3}); }}) : null,
                         active: false, label: null
                     };
                     tr.id = 'sweep-row-' + r.height;
@@ -2209,6 +2228,71 @@ Southside_Auto,42.3022,-83.0286,auto`;
             const sel = document.getElementById('model-variant');
             if (sel) sel.value = 'min5';
         });
+
+        // ═══════════════════════════════════════════════════════════════════
+        // ─── PRINT TO PNG ───────────────────────────────────────────────────
+        // ═══════════════════════════════════════════════════════════════════
+
+        function buildOverlayHTML() {
+            const viewLabels = {
+                improvement: 'Improvement (dB gain)',
+                coverage: 'NSB and Neighbours Bins (RSRP)',
+                newsite: 'New Site Build Prediction Bins (RSRP)'
+            };
+            const viewEl = document.querySelector('input[name="view-mode"]:checked');
+            const view = viewEl ? (viewLabels[viewEl.value] || viewEl.value) : '—';
+            const lat = lastSiteLat !== null ? lastSiteLat.toFixed(4) : '—';
+            const lon = lastSiteLon !== null ? lastSiteLon.toFixed(4) : '—';
+            const ht  = lastSiteHeight !== null ? lastSiteHeight.toFixed(1) + ' m' : '—';
+            const improved = document.getElementById('improved-count').textContent;
+            const meanImp  = document.getElementById('mean-improvement').textContent;
+            const ts = new Date().toLocaleString();
+            return `<b>Windsor RF ML — Site Deployment Analysis</b><br>
+Band: 2100 MHz LTE B4 &nbsp;·&nbsp; Windsor, ON<br>
+Site: ${lat}° N, ${Math.abs(parseFloat(lon) || 0).toFixed(4)}° W &nbsp;·&nbsp; Height: ${ht}<br>
+View: ${view}<br>
+Bins Improved (≥3 dB): ${improved} &nbsp;·&nbsp; Mean: ${meanImp}<br>
+${ts}`;
+        }
+
+        async function printToPng() {
+            const btn = document.getElementById('print-png-btn');
+            btn.disabled = true;
+            btn.textContent = '...capturing';
+            const panel = document.getElementById('info-panel');
+            panel.style.visibility = 'hidden';
+
+            const overlay = document.createElement('div');
+            overlay.id = 'print-overlay';
+            overlay.style.cssText = `position:absolute;bottom:50px;left:10px;z-index:900;
+                background:rgba(255,255,255,0.88);border:1px solid #2c3e50;border-radius:4px;
+                padding:8px 12px;font-family:'Segoe UI',sans-serif;font-size:11px;
+                line-height:1.6;color:#2c3e50;max-width:280px;
+                box-shadow:0 1px 4px rgba(0,0,0,0.3);`;
+            overlay.innerHTML = buildOverlayHTML();
+            document.getElementById('map').appendChild(overlay);
+
+            try {
+                const canvas = await html2canvas(document.getElementById('map'), {
+                    useCORS: true, allowTaint: false, logging: false,
+                    scale: 1, backgroundColor: '#f0ece3', imageTimeout: 15000
+                });
+                const link = document.createElement('a');
+                const ts = new Date().toISOString().slice(0,19).replace(/[T:]/g, '-');
+                link.download = `windsor_rf_${(lastSiteLat||0).toFixed(4)}_${(lastSiteLon||0).toFixed(4)}_${ts}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            } catch(err) {
+                console.error('PNG export failed:', err);
+                alert('PNG export failed: ' + err.message + '\n\nTry a hard refresh (Ctrl+F5) and retry.');
+            } finally {
+                panel.style.visibility = 'visible';
+                const ov = document.getElementById('print-overlay');
+                if (ov) ov.remove();
+                btn.disabled = false;
+                btn.textContent = '🖨 Print to PNG';
+            }
+        }
 
     </script>
 </body>
