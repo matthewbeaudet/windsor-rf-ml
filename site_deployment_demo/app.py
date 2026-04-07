@@ -182,14 +182,72 @@ def baseline_coverage():
         return jsonify({'error': str(e)}), 500
 
 
+_ised_sites_cache = None
+
+def _get_ised_sites():
+    """Load and deduplicate ISED Windsor sites from GCS CSV (cached)."""
+    global _ised_sites_cache
+    if _ised_sites_cache is not None:
+        return _ised_sites_cache
+
+    import os
+    tmp_path = Path('/tmp/ISED_Overview_Table.csv')
+
+    # Download from GCS if running on Cloud Run
+    if not tmp_path.exists():
+        bucket_name = os.environ.get('GCS_BUCKET', 'windsor-rf-ml-data')
+        try:
+            from google.cloud import storage as gcs
+            client = gcs.Client()
+            blob = client.bucket(bucket_name).blob('ISED Overview_Table.csv')
+            blob.download_to_filename(str(tmp_path))
+            print(f"  ✓ Downloaded ISED_Overview_Table.csv from GCS bucket {bucket_name}")
+        except Exception as e:
+            print(f"  ✗ GCS download failed for ISED CSV: {e}")
+            _ised_sites_cache = []
+            return _ised_sites_cache
+
+    df = pd.read_csv(tmp_path, low_memory=False)
+
+    # Filter to Windsor by coordinates
+    df = df.dropna(subset=['latitude', 'longitude'])
+    df = df[
+        (df['latitude'].between(42.18, 42.42)) &
+        (df['longitude'].between(-83.15, -82.88))
+    ].copy()
+    print(f"  ISED Windsor rows: {len(df):,}")
+
+    # Round to 4 decimal places (~11m) to deduplicate co-located sectors
+    df['lat_r'] = df['latitude'].round(4)
+    df['lon_r'] = df['longitude'].round(4)
+
+    sites = []
+    for (lat_r, lon_r), group in df.groupby(['lat_r', 'lon_r']):
+        def uniq(col):
+            return sorted({str(v) for v in group[col].dropna() if str(v).strip()})
+        sites.append({
+            'lat': float(lat_r),
+            'lon': float(lon_r),
+            'licensees': uniq('licensee_name'),
+            'technologies': uniq('technology'),
+            'bands': uniq('licence_category'),
+            'sectors': int(len(group))
+        })
+
+    print(f"  ✓ ISED sites deduplicated: {len(sites)} unique tower locations")
+    _ised_sites_cache = sites
+    return _ised_sites_cache
+
+
 @app.route('/api/ised_sites', methods=['GET'])
 def ised_sites():
     """Return deduplicated ISED colocation sites for Windsor."""
-    import json as _json
-    ised_path = Path(__file__).parent / 'static' / 'ised_sites.json'
-    with open(ised_path) as f:
-        sites = _json.load(f)
-    return jsonify({'sites': sites})
+    try:
+        sites = _get_ised_sites()
+        return jsonify({'sites': sites})
+    except Exception as e:
+        print(f"Error in ised_sites: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/sites', methods=['GET'])
