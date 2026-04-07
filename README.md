@@ -138,8 +138,6 @@ gsutil -m cp Cline/missing_sites_dataset.csv  gs://windsor-gcs/windsor/Cline/
 ## Model
 
 The production model is **LightGBM 53-feature min 5 samples per bin**  (`lean_lgbm_53feat_min5_model.joblib`).
-A model trained on all bins (`lean_lgbm_53feat_model.joblib`) is also available and togglable via the UI.
-
 Features include: H3-indexed clutter height statistics, building/tree counts, DSM LoS ray-trace metrics, DEM terrain elevation, pycraf path loss, fresnel zone clearance, and antenna geometry (azimuth, tilt, height, frequency).
 
 See [MODEL_TECHNICAL_REFERENCE.md](MODEL_TECHNICAL_REFERENCE.md) for the full feature list and training methodology.
