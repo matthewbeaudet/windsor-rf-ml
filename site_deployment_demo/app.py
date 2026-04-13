@@ -119,8 +119,12 @@ def predict_site():
         # Add site location to response
         result['site_location'] = {'lat': lat, 'lon': lon}
         result['model_variant'] = model_variant
-        
-        print(f"  → {result['stats']['improved_bins']} bins improved by ≥3dB")
+
+        # Count bad IMSIs covered by the prediction footprint
+        result['stats']['covered_bad_imsis'] = _covered_bad_imsis(result.get('footprint_geojson'))
+
+        print(f"  → {result['stats']['improved_bins']} bins improved by ≥3dB  "
+              f"/ {result['stats']['covered_bad_imsis']:,} bad IMSIs covered")
         
         return jsonify(result)
         
@@ -628,6 +632,89 @@ def clutter_heights():
         return jsonify({'error': str(e)}), 500
 
 
+# ── Bad IMSI bins ─────────────────────────────────────────────────────────────
+# Loaded once at startup from data/bad_bins_wnd.csv (or GCS fallback)
+_bad_bins_df   = None   # DataFrame: h3_index, lat, lon, bad_ce_ims
+_bad_bins_dict = None   # {h3_index: bad_ce_ims} for O(1) coverage lookup
+
+def _load_bad_bins():
+    global _bad_bins_df, _bad_bins_dict
+    if _bad_bins_df is not None:
+        return
+
+    import os
+    local_path = Path(__file__).parent / 'data' / 'bad_bins_wnd.csv'
+
+    # GCS fallback for Cloud Run
+    if not local_path.exists():
+        bucket_name = os.environ.get('GCS_BUCKET', 'windsor-rf-ml-data')
+        tmp_path = Path('/tmp/bad_bins_wnd.csv')
+        if not tmp_path.exists():
+            try:
+                from google.cloud import storage as gcs
+                client = gcs.Client()
+                blob = client.bucket(bucket_name).blob('bad_bins_wnd.csv')
+                blob.download_to_filename(str(tmp_path))
+                print(f"  ✓ Downloaded bad_bins_wnd.csv from GCS")
+            except Exception as e:
+                print(f"  ✗ GCS download failed for bad_bins_wnd.csv: {e}")
+                _bad_bins_df   = pd.DataFrame(columns=['h3_index','lat','lon','bad_ce_ims'])
+                _bad_bins_dict = {}
+                return
+        local_path = tmp_path
+
+    df = pd.read_csv(local_path)
+    df['lat'] = df['lat'].round(5)
+    df['lon'] = df['lon'].round(5)
+    _bad_bins_df   = df
+    _bad_bins_dict = dict(zip(df['h3_index'], df['bad_ce_ims']))
+    print(f"  ✓ Bad IMSI bins loaded: {len(df):,} bins  "
+          f"total={df['bad_ce_ims'].sum():,} IMSIs  "
+          f"max={df['bad_ce_ims'].max():,}")
+
+# Load eagerly (small file, fast)
+threading.Thread(target=_load_bad_bins, daemon=True).start()
+
+
+def _covered_bad_imsis(footprint_geojson):
+    """Count bad IMSIs covered by a prediction footprint GeoJSON."""
+    if _bad_bins_dict is None or not footprint_geojson:
+        return 0
+    total = 0
+    for feat in footprint_geojson.get('features', []):
+        h3_idx = feat.get('properties', {}).get('h3_index')
+        if h3_idx:
+            total += _bad_bins_dict.get(h3_idx, 0)
+    return total
+
+
+@app.route('/api/bad_imsi_bins', methods=['GET'])
+def bad_imsi_bins():
+    """Return bad IMSI bins within the viewport for map display."""
+    try:
+        _load_bad_bins()
+        if _bad_bins_df is None or _bad_bins_df.empty:
+            return jsonify({'points': []})
+
+        min_lat = float(request.args.get('min_lat', 42.2))
+        max_lat = float(request.args.get('max_lat', 42.4))
+        min_lon = float(request.args.get('min_lon', -83.2))
+        max_lon = float(request.args.get('max_lon', -82.9))
+
+        df = _bad_bins_df
+        mask = (
+            (df['lat'] >= min_lat) & (df['lat'] <= max_lat) &
+            (df['lon'] >= min_lon) & (df['lon'] <= max_lon)
+        )
+        vp = df[mask]
+        points = vp[['lat', 'lon', 'bad_ce_ims']].values.tolist()
+        print(f"  Bad IMSI viewport: {len(points):,} bins")
+        return jsonify({'points': points})
+    except Exception as e:
+        print(f"Error in bad_imsi_bins: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 # Cached poor-coverage index: baseline bins with predicted_rsrp <= -109.5
 _poor_coverage_index = None
 
@@ -746,16 +833,17 @@ def height_sweep():
             bins_6plus = sum(1 for f in gjfeats if f['properties'].get('is_improved') and f['properties'].get('improvement_db', 0) >= 6)
             results.append({
                 'height': h,
-                'improved_bins':    result['stats']['improved_bins'],
-                'mean_improvement': round(result['stats']['mean_improvement'], 2),
-                'max_improvement':  round(result['stats']['max_improvement'], 2),
-                'footprint_bins':   result['stats'].get('site_footprint_bins', result['stats'].get('footprint_bins', 0)),
-                'bins_3to4':        bins_3to4,
-                'bins_4to6':        bins_4to6,
-                'bins_6plus':       bins_6plus,
-                'geojson':          result['geojson'],
-                'footprint_geojson': result.get('footprint_geojson'),
-                'rsrp_geojson':     result.get('rsrp_geojson', result['geojson']),
+                'improved_bins':       result['stats']['improved_bins'],
+                'mean_improvement':    round(result['stats']['mean_improvement'], 2),
+                'max_improvement':     round(result['stats']['max_improvement'], 2),
+                'footprint_bins':      result['stats'].get('site_footprint_bins', result['stats'].get('footprint_bins', 0)),
+                'bins_3to4':           bins_3to4,
+                'bins_4to6':           bins_4to6,
+                'bins_6plus':          bins_6plus,
+                'covered_bad_imsis':   _covered_bad_imsis(result.get('footprint_geojson')),
+                'geojson':             result['geojson'],
+                'footprint_geojson':   result.get('footprint_geojson'),
+                'rsrp_geojson':        result.get('rsrp_geojson', result['geojson']),
             })
 
         best = max(results, key=lambda r: r['improved_bins'])

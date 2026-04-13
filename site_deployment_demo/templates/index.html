@@ -364,6 +364,7 @@
                             <th style="padding:4px; text-align:right; border:1px solid #ddd;">Improved</th>
                             <th style="padding:4px; text-align:right; border:1px solid #ddd;">Mean(dB)</th>
                             <th style="padding:4px; text-align:right; border:1px solid #ddd;">Max(dB)</th>
+                            <th style="padding:4px; text-align:right; border:1px solid #ddd;">Bad IMSIs</th>
                             <th style="padding:4px; text-align:center; border:1px solid #ddd;">Map</th>
                         </tr>
                     </thead>
@@ -435,6 +436,10 @@
                 <span class="stat-label">Total Bins Predicted:</span>
                 <span class="stat-value" id="total-bins">-</span>
             </div>
+            <div class="stat-row" id="bad-imsi-stat-row" style="display:none;">
+                <span class="stat-label">Bad IMSIs Covered:</span>
+                <span class="stat-value highlight" id="covered-bad-imsis">-</span>
+            </div>
         </div>
         
         <div id="loading" style="display:none;">
@@ -491,6 +496,21 @@
             </label>
             <div id="clutter-loading" style="display:none; font-size:12px; color:#888; margin-top:3px;">
                 Loading clutter heights...
+            </div>
+            <label style="margin-top:6px;">
+                <input type="checkbox" id="bad-imsi-toggle">
+                Bad IMSI Bins
+                <span id="bad-imsi-count" style="font-size:11px; color:#888; margin-left:4px;"></span>
+            </label>
+            <div id="bad-imsi-loading" style="display:none; font-size:12px; color:#888; margin-top:3px;">
+                Loading bad IMSI bins...
+            </div>
+            <div id="bad-imsi-legend" style="display:none; margin-top:4px; font-size:11px; color:#555;">
+                <span style="background:#ffeb3b; padding:1px 6px; border-radius:2px;">&lt;150</span>
+                <span style="background:#ff9800; color:#fff; padding:1px 6px; border-radius:2px;">150–250</span>
+                <span style="background:#f44336; color:#fff; padding:1px 6px; border-radius:2px;">250–400</span>
+                <span style="background:#7b0000; color:#fff; padding:1px 6px; border-radius:2px;">&gt;400</span>
+                <span style="color:#888; margin-left:2px;">IMSIs</span>
             </div>
         </div>
         
@@ -955,6 +975,80 @@
             }
         });
 
+        // ─── Bad IMSI Bins Layer ──────────────────────────────────────────────
+        let badImsiLayer = null;
+        let badImsiVisible = false;
+        let badImsiRefreshTimer = null;
+
+        function badImsiColor(count) {
+            if (count > 400) return '#7b0000';
+            if (count > 250) return '#f44336';
+            if (count > 150) return '#ff9800';
+            return '#ffeb3b';
+        }
+
+        async function refreshBadImsiLayer() {
+            if (!badImsiVisible) return;
+            const bounds = map.getBounds();
+            const params = new URLSearchParams({
+                min_lat: bounds.getSouth().toFixed(5),
+                max_lat: bounds.getNorth().toFixed(5),
+                min_lon: bounds.getWest().toFixed(5),
+                max_lon: bounds.getEast().toFixed(5),
+            });
+            document.getElementById('bad-imsi-loading').style.display = 'block';
+            try {
+                const resp = await fetch('/api/bad_imsi_bins?' + params);
+                const data = await resp.json();
+                if (badImsiLayer) { map.removeLayer(badImsiLayer); badImsiLayer = null; }
+                if (!badImsiVisible) return;
+                const r = dotRadius();
+                const features = (data.points || []).map(p => ({
+                    type: 'Feature',
+                    geometry: { type: 'Point', coordinates: [p[1], p[0]] },
+                    properties: { count: p[2] }
+                }));
+                badImsiLayer = L.geoJSON({ type: 'FeatureCollection', features }, {
+                    pointToLayer: function(feature, latlng) {
+                        return L.circleMarker(latlng, {
+                            radius: r,
+                            fillColor: badImsiColor(feature.properties.count),
+                            fillOpacity: 0.8,
+                            color: '#333',
+                            weight: 0.3
+                        });
+                    },
+                    onEachFeature: function(feature, layer) {
+                        layer.bindPopup(
+                            `<strong>Bad IMSI Bin</strong><br>` +
+                            `IMSIs: <strong>${feature.properties.count.toLocaleString()}</strong>`
+                        );
+                    }
+                }).addTo(map);
+                badImsiLayer.bringToBack();
+                document.getElementById('bad-imsi-count').textContent = `(${features.length.toLocaleString()} in view)`;
+            } catch(e) { console.error('Bad IMSI layer error:', e); }
+            finally { document.getElementById('bad-imsi-loading').style.display = 'none'; }
+        }
+
+        map.on('moveend zoomend', function() {
+            if (!badImsiVisible) return;
+            clearTimeout(badImsiRefreshTimer);
+            badImsiRefreshTimer = setTimeout(refreshBadImsiLayer, 300);
+        });
+
+        document.getElementById('bad-imsi-toggle').addEventListener('change', function() {
+            badImsiVisible = this.checked;
+            document.getElementById('bad-imsi-legend').style.display = badImsiVisible ? 'block' : 'none';
+            if (badImsiVisible) {
+                refreshBadImsiLayer();
+            } else {
+                if (badImsiLayer) { map.removeLayer(badImsiLayer); badImsiLayer = null; }
+                document.getElementById('bad-imsi-loading').style.display = 'none';
+                document.getElementById('bad-imsi-count').textContent = '';
+            }
+        });
+
         // ─── Existing Site Markers ────────────────────────────────────────────
         let sitesLayer = null;
 
@@ -1335,6 +1429,10 @@
                 document.getElementById('max-improvement').textContent = `${data.stats.max_improvement.toFixed(1)} dB`;
                 document.getElementById('footprint-size').textContent = data.stats.site_footprint_bins.toLocaleString();
                 document.getElementById('total-bins').textContent = data.stats.total_bins.toLocaleString();
+                if (data.stats.covered_bad_imsis !== undefined) {
+                    document.getElementById('covered-bad-imsis').textContent = data.stats.covered_bad_imsis.toLocaleString();
+                    document.getElementById('bad-imsi-stat-row').style.display = '';
+                }
                 
                 // Hide loading, show stats
                 document.getElementById('loading').style.display = 'none';
@@ -1371,6 +1469,7 @@
             if (newSiteLayer)     { map.removeLayer(newSiteLayer);     newSiteLayer     = null; }
             lastGeoJSON          = null;
             lastFootprintGeoJSON = null;
+            document.getElementById('bad-imsi-stat-row').style.display = 'none';
 
             // Remove proposed site marker
             if (siteMarker) { map.removeLayer(siteMarker); siteMarker = null; }
@@ -2069,11 +2168,15 @@ Southside_Auto,42.3022,-83.0286,auto`;
                         active: false, label: null
                     };
                     tr.id = 'sweep-row-' + r.height;
+                    const badImsiCell = r.covered_bad_imsis !== undefined
+                        ? '<td style="padding:4px; text-align:right; border:1px solid #ddd;">' + r.covered_bad_imsis.toLocaleString() + '</td>'
+                        : '<td style="padding:4px; text-align:right; border:1px solid #ddd; color:#aaa;">-</td>';
                     tr.innerHTML = '<td style="padding:4px; border:1px solid #ddd; font-weight:' + (isBest?'bold':'normal') + ';">' +
                         r.height + 'm' + (isBest ? ' ★' : '') + '</td>' +
                         '<td style="padding:4px; text-align:right; border:1px solid #ddd; background:' + bg + ';">' + r.improved_bins.toLocaleString() + '</td>' +
                         '<td style="padding:4px; text-align:right; border:1px solid #ddd;">' + r.mean_improvement + '</td>' +
                         '<td style="padding:4px; text-align:right; border:1px solid #ddd;">' + r.max_improvement + '</td>' +
+                        badImsiCell +
                         '<td style="padding:4px; text-align:center; border:1px solid #ddd;">' +
                         '<button onclick="toggleSweepLayer(' + r.height + ')" id="sweep-btn-' + r.height + '" ' +
                         'title="Toggle this height on map" ' +
@@ -2151,13 +2254,14 @@ Southside_Auto,42.3022,-83.0286,auto`;
 
         function downloadSweepCSV() {
             if (!sweepResults.length) return;
-            const hdr = 'height_m,improved_bins,bins_3to4dB,bins_4to6dB,bins_6plusdB,mean_improvement_db,max_improvement_db,footprint_bins';
+            const hdr = 'height_m,improved_bins,bins_3to4dB,bins_4to6dB,bins_6plusdB,mean_improvement_db,max_improvement_db,footprint_bins,covered_bad_imsis';
             const rows = sweepResults.map(r =>
                 [r.height, r.improved_bins,
                  r.bins_3to4 !== undefined ? r.bins_3to4 : '',
                  r.bins_4to6 !== undefined ? r.bins_4to6 : '',
                  r.bins_6plus !== undefined ? r.bins_6plus : '',
-                 r.mean_improvement, r.max_improvement, r.footprint_bins].join(',')
+                 r.mean_improvement, r.max_improvement, r.footprint_bins,
+                 r.covered_bad_imsis !== undefined ? r.covered_bad_imsis : ''].join(',')
             );
             const blob = new Blob([hdr + '\n' + rows.join('\n')], {type:'text/csv'});
             const a = document.createElement('a'); a.href = URL.createObjectURL(blob);

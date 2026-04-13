@@ -372,6 +372,7 @@ class SitePredictor:
                 'type': 'Feature',
                 'geometry': self._h3_to_polygon(row['h3_index']),
                 'properties': {
+                    'h3_index':      row['h3_index'],
                     'new_site_rsrp': round(row['new_site_rsrp'], 1),
                     'baseline_rsrp': round(row['baseline_rsrp'], 1),
                     'improvement_db': round(row['improvement'], 1),
