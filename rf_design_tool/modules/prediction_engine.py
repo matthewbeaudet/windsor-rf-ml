@@ -27,7 +27,8 @@ class PredictionEngine:
         self.model = model
         self.feature_names = feature_names
         self.data_loader = data_loader
-        self.feature_engine = FeatureEngine()
+        terrain_fallback = getattr(data_loader, 'terrain_elevation_fallback', 183.0)
+        self.feature_engine = FeatureEngine(terrain_elevation_fallback=terrain_fallback)
         
         logger.info(f"Prediction engine initialized with {len(feature_names)} features")
     

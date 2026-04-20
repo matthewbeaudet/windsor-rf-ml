@@ -82,17 +82,23 @@ logger = logging.getLogger(__name__)
 class DataLoader:
     """Handles loading all required datasets and models"""
     
-    def __init__(self, base_path: str = None):
+    def __init__(self, base_path: str = None,
+                 h3_features_path: str = None,
+                 terrain_elevation_fallback: float = 183.0):
         """
-        Initialize data loader
-        
         Args:
             base_path: Base path to data directory. If None, uses parent directory.
+            h3_features_path: Full path to H3 environmental features CSV.
+                Overrides the default Windsor path when provided.
+            terrain_elevation_fallback: Default terrain elevation (m ASL) for bins
+                missing DEM data. Windsor ~183 m; Montreal ~50 m.
         """
         if base_path is None:
             self.base_path = Path(__file__).parent.parent.parent
         else:
             self.base_path = Path(base_path)
+        self._h3_features_path_override = Path(h3_features_path) if h3_features_path else None
+        self.terrain_elevation_fallback = terrain_elevation_fallback
         
         logger.info(f"Data loader initialized with base path: {self.base_path}")
         
@@ -161,12 +167,16 @@ class DataLoader:
         
         logger.info("Loading environmental features from COMPLETE augmented database...")
         
-        # Load COMPLETE augmented database (1.7M bins for entire Windsor)
-        # Prefer /tmp/ on Cloud Run (downloaded from GCS), fall back to local path
-        complete_db_path = _resolve_path(
-            self.base_path / "h3_complete_features_windsor.csv",
-            "h3_complete_features_windsor.csv"
-        )
+        # Load H3 environmental features database.
+        # If an override path was provided at construction, use it directly.
+        # Otherwise prefer /tmp/ (GCS download on Cloud Run) then local Windsor path.
+        if self._h3_features_path_override:
+            complete_db_path = self._h3_features_path_override
+        else:
+            complete_db_path = _resolve_path(
+                self.base_path / "h3_complete_features_windsor.csv",
+                "h3_complete_features_windsor.csv"
+            )
 
         if not complete_db_path.exists():
             logger.warning(f"Complete augmented database not found at {complete_db_path}")
@@ -436,7 +446,7 @@ class DataLoader:
                            f"Will fall back to Windsor default terrain (183m ASL).")
 
         # ── Merge: all DSM bins, add DEM where available ──────────────────────
-        WINDSOR_TERRAIN_ASL = 183.0   # fallback if DEM missing for a bin
+        WINDSOR_TERRAIN_ASL = self.terrain_elevation_fallback
         self._dsm_lookup = {
             idx: {
                 "dem": dem_dict.get(idx, WINDSOR_TERRAIN_ASL),

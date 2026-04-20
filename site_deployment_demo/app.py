@@ -6,34 +6,37 @@ Interactive demo for testing site deployment locations
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 import sys
-import io
 import threading
 import pandas as pd
 from pathlib import Path
 
-# Add parent directory to path to import rf_design_tool modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from api.site_predictor import SitePredictor
+from config.regions import REGIONS, WINDSOR
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for development
+CORS(app)
 
-# ── Startup initialization ────────────────────────────────────────────────────
-# Predictor is loaded in a background thread so Flask can bind the port and
-# serve the loading screen immediately. _startup_log streams progress to the UI.
-
-predictor = None
-_startup_log = []
+# ── Startup state ─────────────────────────────────────────────────────────────
+predictor      = None
+_startup_log   = []
 _startup_ready = False
 _startup_error = None
+_current_region_cfg = WINDSOR   # set by /api/init before background thread starts
 
-def _init_predictor_background():
-    global predictor, _startup_ready, _startup_error
+
+def _init_predictor_background(region_cfg):
+    global predictor, _startup_ready, _startup_error, _baseline_with_coords, _clutter_height_index, _clutter_layer_index
+    # Reset cached viewport indexes when region changes
+    _baseline_with_coords = None
+    _clutter_height_index = None
+    _clutter_layer_index  = None
     try:
-        _startup_log.append('> Initializing Windsor RF ML Tool...')
+        _startup_log.append(f'> Initializing {region_cfg.display_name} RF ML Tool...')
         _startup_log.append('> Loading ML models and environmental data...')
-        predictor = SitePredictor()
+        predictor = SitePredictor(region_config=region_cfg)
         _startup_log.append('> Baseline network loaded.')
         _startup_log.append('> System ready.')
         _startup_ready = True
@@ -41,7 +44,26 @@ def _init_predictor_background():
         _startup_error = str(e)
         _startup_log.append(f'> ERROR: {e}')
 
-threading.Thread(target=_init_predictor_background, daemon=True).start()
+
+@app.route('/api/init', methods=['POST'])
+def init_region():
+    """
+    Select region and start background initialization.
+    Must be called before /api/status is polled.
+    """
+    global _current_region_cfg, _startup_log, _startup_ready, _startup_error, predictor
+    region_name = (request.json or {}).get('region', 'windsor')
+    cfg = REGIONS.get(region_name, WINDSOR)
+    _current_region_cfg = cfg
+    # Reset startup state so a fresh poll works
+    predictor      = None
+    _startup_log   = []
+    _startup_ready = False
+    _startup_error = None
+    threading.Thread(
+        target=_init_predictor_background, args=(cfg,), daemon=True
+    ).start()
+    return jsonify({'region': cfg.name, 'display_name': cfg.display_name})
 
 def _get_predictor():
     if predictor is None:
@@ -145,12 +167,20 @@ def _get_baseline_with_coords():
     if _baseline_with_coords is None:
         import h3 as h3lib
         print("Building baseline coordinate index...")
-        df = _get_predictor().baseline.copy()
+        p = _get_predictor()
+        df = p.baseline.copy()
+        if df.empty:
+            _baseline_with_coords = df
+            return _baseline_with_coords
+        # Normalise RSRP column to 'predicted_rsrp' for the API response
+        rsrp_col = p.cfg.baseline_rsrp_col
+        if rsrp_col in df.columns and rsrp_col != 'predicted_rsrp':
+            df = df.rename(columns={rsrp_col: 'predicted_rsrp'})
         coords = [h3lib.cell_to_latlng(idx) for idx in df['h3_index']]
         df['lat'] = [round(c[0], 5) for c in coords]
         df['lon'] = [round(c[1], 5) for c in coords]
         _baseline_with_coords = df
-        print(f"  ✓ Baseline coordinate index built: {len(df):,} bins")
+        print(f"  ✓ Baseline coordinate index: {len(df):,} bins")
     return _baseline_with_coords
 
 
@@ -162,10 +192,11 @@ def baseline_coverage():
     Only returns bins within the viewport for performance.
     """
     try:
-        min_lat = float(request.args.get('min_lat', 42.2))
-        max_lat = float(request.args.get('max_lat', 42.4))
-        min_lon = float(request.args.get('min_lon', -83.2))
-        max_lon = float(request.args.get('max_lon', -82.9))
+        b = _current_region_cfg.bounds
+        min_lat = float(request.args.get('min_lat', b['min_lat']))
+        max_lat = float(request.args.get('max_lat', b['max_lat']))
+        min_lon = float(request.args.get('min_lon', b['min_lon']))
+        max_lon = float(request.args.get('max_lon', b['max_lon']))
 
         df = _get_baseline_with_coords()
 
@@ -215,11 +246,12 @@ def _get_ised_sites():
 
     # Filter to Windsor by coordinates
     df = df.dropna(subset=['latitude', 'longitude'])
+    b = _current_region_cfg.bounds
     df = df[
-        (df['latitude'].between(42.18, 42.42)) &
-        (df['longitude'].between(-83.15, -82.88))
+        (df['latitude'].between(b['min_lat'], b['max_lat'])) &
+        (df['longitude'].between(b['min_lon'], b['max_lon']))
     ].copy()
-    print(f"  ISED Windsor rows: {len(df):,}")
+    print(f"  ISED {_current_region_cfg.display_name} rows: {len(df):,}")
 
     # Round to 4 decimal places (~11m) to deduplicate co-located sectors
     df['lat_r'] = df['latitude'].round(4)

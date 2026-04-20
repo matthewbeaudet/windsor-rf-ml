@@ -192,17 +192,61 @@
             color: #2c3e50;
         }
 
+        /* ── Region selector overlay ── */
+        #region-select-screen {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            background: #0d1117;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 32px;
+            transition: opacity 0.4s ease;
+        }
+        #region-select-screen.fade-out { opacity: 0; pointer-events: none; }
+        #region-select-screen h1 {
+            font-family: 'Courier New', monospace;
+            color: #00ff88;
+            font-size: 22px;
+            letter-spacing: 3px;
+            margin: 0;
+        }
+        #region-select-screen p {
+            font-family: 'Courier New', monospace;
+            color: #888;
+            font-size: 13px;
+            margin: -20px 0 0 0;
+        }
+        .region-btn {
+            font-family: 'Courier New', monospace;
+            font-size: 15px;
+            font-weight: bold;
+            padding: 14px 48px;
+            border: 2px solid #00ff88;
+            border-radius: 4px;
+            background: transparent;
+            color: #00ff88;
+            cursor: pointer;
+            letter-spacing: 2px;
+            transition: background 0.2s, color 0.2s;
+        }
+        .region-btn:hover { background: #00ff88; color: #0d1117; }
+        #region-btns { display: flex; gap: 24px; }
+
         /* ── Terminal loading screen ── */
         #loading-screen {
             position: fixed;
             inset: 0;
             z-index: 9999;
             background: #0d1117;
-            display: flex;
+            display: none;   /* hidden until region is chosen */
             align-items: center;
             justify-content: center;
             transition: opacity 0.6s ease;
         }
+        #loading-screen.active { display: flex; }
         #loading-screen.fade-out {
             opacity: 0;
             pointer-events: none;
@@ -240,10 +284,20 @@
     </style>
 </head>
 <body>
-    <!-- Terminal-style loading overlay — removed once backend is ready -->
+    <!-- Region selector — shown first, fades out once region is picked -->
+    <div id="region-select-screen">
+        <h1>RF ML TOOL &nbsp;//&nbsp; SELECT REGION</h1>
+        <p>Choose a region to load models and coverage data</p>
+        <div id="region-btns">
+            <button class="region-btn" onclick="selectRegion('windsor')">Windsor, ON</button>
+            <button class="region-btn" onclick="selectRegion('montreal')">Montréal, QC</button>
+        </div>
+    </div>
+
+    <!-- Terminal-style loading overlay — shown after region selection -->
     <div id="loading-screen">
         <div id="terminal">
-            <div id="terminal-header">WINDSOR RF ML &nbsp;//&nbsp; SYSTEM BOOT</div>
+            <div id="terminal-header" id="terminal-header">RF ML &nbsp;//&nbsp; SYSTEM BOOT</div>
             <div id="terminal-lines"></div>
             <span id="terminal-cursor">█</span>
         </div>
@@ -258,7 +312,7 @@
             <strong>Click anywhere</strong> on the map to test a potential site location.
             The tool will show bins improved by <strong>≥3dB</strong>.
         </div>
-        <div style="font-size:12px; color:#555; background:#eaf4ff; border:1px solid #b3d4f5; border-radius:5px; padding:6px 10px; margin-bottom:4px;">
+        <div data-band-label style="font-size:12px; color:#555; background:#eaf4ff; border:1px solid #b3d4f5; border-radius:5px; padding:6px 10px; margin-bottom:4px;">
             📡 Band: <strong>2100 MHz</strong> (LTE B4) &nbsp;·&nbsp; Windsor, ON
         </div>
 
@@ -643,8 +697,52 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     
     <script>
+        // ── Region configs (mirrors server-side RegionConfig) ────────────────
+        const REGION_CONFIGS = {
+            windsor:  { center: [42.3149, -83.0364], zoom: 13,
+                        label: 'Windsor, ON',  band: 'B4 (2100 MHz)' },
+            montreal: { center: [45.5017, -73.5673], zoom: 12,
+                        label: 'Montréal, QC', band: 'B2/B4 (1900/2100 MHz)' },
+        };
+        let _selectedRegion = null;
+
+        // ── Region selection ──────────────────────────────────────────────────
+        function selectRegion(region) {
+            _selectedRegion = region;
+            const cfg = REGION_CONFIGS[region];
+
+            // Fade out region selector
+            const sel = document.getElementById('region-select-screen');
+            sel.classList.add('fade-out');
+            setTimeout(() => sel.remove(), 450);
+
+            // Update header and band label
+            document.getElementById('terminal-header').textContent =
+                cfg.label.toUpperCase() + '  //  SYSTEM BOOT';
+            const bandEl = document.querySelector('[data-band-label]');
+            if (bandEl) bandEl.textContent = '📡 Band: ' + cfg.band + '  ·  ' + cfg.label;
+
+            // Show loading screen
+            document.getElementById('loading-screen').classList.add('active');
+
+            // POST region to backend, then start polling
+            fetch('/api/init', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({region: region}),
+            })
+            .then(() => {
+                // Init map with region center
+                map.setView(cfg.center, cfg.zoom);
+                startPolling();
+            })
+            .catch(() => startPolling());
+        }
+
         // ── Loading screen: poll /api/status until backend is ready ──────────
-        (function () {
+        const map = L.map('map').setView([42.3149, -83.0364], 13);   // placeholder; setView called after region pick
+
+        function startPolling() {
             const screen = document.getElementById('loading-screen');
             const lines  = document.getElementById('terminal-lines');
             const cursor = document.getElementById('terminal-cursor');
@@ -686,10 +784,7 @@
             }
 
             poll();
-        })();
-
-        // Initialize map centered on Windsor, Ontario
-        const map = L.map('map').setView([42.3149, -83.0364], 13);
+        }
         
         // Add OpenStreetMap tiles
         const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -1374,10 +1469,10 @@
                 body: JSON.stringify({
                         lat: lat,
                         lon: lon,
-                        rs_power: 43,
                         edt: edt,
                         zoom: map.getZoom(),
                         model_variant: modelVariant,
+                        region: _selectedRegion,
                         ...(manualHeight !== null ? { height: manualHeight } : {}),
                         radius: radiusKm * 1000
                     })
@@ -1424,9 +1519,13 @@
                 document.getElementById('view-toggle').style.display = 'block';
 
                 // Update stats panel
-                document.getElementById('improved-count').textContent = data.stats.improved_bins.toLocaleString();
-                document.getElementById('mean-improvement').textContent = `${data.stats.mean_improvement.toFixed(1)} dB`;
-                document.getElementById('max-improvement').textContent = `${data.stats.max_improvement.toFixed(1)} dB`;
+                const hasBaseline = data.stats.has_baseline !== false;
+                document.getElementById('improved-count').textContent =
+                    hasBaseline ? data.stats.improved_bins.toLocaleString() : 'N/A';
+                document.getElementById('mean-improvement').textContent =
+                    hasBaseline ? `${data.stats.mean_improvement.toFixed(1)} dB` : 'N/A';
+                document.getElementById('max-improvement').textContent =
+                    hasBaseline ? `${data.stats.max_improvement.toFixed(1)} dB` : 'N/A';
                 document.getElementById('footprint-size').textContent = data.stats.site_footprint_bins.toLocaleString();
                 document.getElementById('total-bins').textContent = data.stats.total_bins.toLocaleString();
                 if (data.stats.covered_bad_imsis !== undefined) {
