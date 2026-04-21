@@ -347,11 +347,12 @@
                         style="width:70px; padding:3px 6px; border:1px solid #ccc; border-radius:4px; font-size:13px;"
                         title="Leave blank to auto-detect from building/clutter height at click location">
                 </label>
-                <label style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <label id="model-variant-row" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                     <span>Model:</span>
                     <select id="model-variant" style="padding:3px 6px; border:1px solid #ccc; border-radius:4px; font-size:13px; background:#fff;">
                         <option value="min5" selected>Min-5</option>
                     </select>
+                    <span id="model-auto-label" style="display:none; font-size:12px; color:#555; font-style:italic;">Auto (Urban/Suburban)</span>
                 </label>
                 <label style="display:flex; justify-content:space-between; align-items:center;">
                     <span>Radius (km):</span>
@@ -724,6 +725,18 @@
 
             // Show loading screen
             document.getElementById('loading-screen').classList.add('active');
+
+            // Show/hide model-variant selector based on region
+            const modelRow = document.getElementById('model-variant-row');
+            const modelSel = document.getElementById('model-variant');
+            const modelAuto = document.getElementById('model-auto-label');
+            if (region === 'montreal') {
+                if (modelSel) modelSel.style.display = 'none';
+                if (modelAuto) modelAuto.style.display = '';
+            } else {
+                if (modelSel) modelSel.style.display = '';
+                if (modelAuto) modelAuto.style.display = 'none';
+            }
 
             // POST region to backend, then start polling
             fetch('/api/init', {
@@ -1245,6 +1258,7 @@
                             `Licensee(s): <strong>${s.licensees.join(', ')}</strong><br>` +
                             `Technologies: ${s.technologies.join(', ') || '—'}<br>` +
                             `Bands: ${s.bands.join(', ') || '—'}<br>` +
+                            `Max antenna height: ${s.max_ant_height != null ? s.max_ant_height + ' m' : '—'}<br>` +
                             `Licences at this location: ${s.sectors}`
                         );
                 });
