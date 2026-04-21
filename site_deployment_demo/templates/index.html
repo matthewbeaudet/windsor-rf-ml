@@ -785,6 +785,13 @@
                         if (data.ready) {
                             addLine('> Map ready. Click anywhere to begin.', false);
                             cursor.style.display = 'none';
+                            // Reload region-specific layers now that the region is known
+                            if (sitesLayer) { map.removeLayer(sitesLayer); sitesLayer = null; }
+                            loadSites();
+                            isedLayer = null;  // force reload on next ISED toggle
+                            if (document.getElementById('ised-toggle').checked) {
+                                loadIsedSites().then(() => { if (isedLayer) isedLayer.addTo(map); });
+                            }
                             setTimeout(function () {
                                 screen.classList.add('fade-out');
                                 setTimeout(function () { screen.remove(); }, 700);
@@ -1215,8 +1222,7 @@
             }
         });
 
-        // Load sites on startup (checkbox is pre-checked)
-        loadSites();
+        // Sites are loaded after region init completes (in startPolling data.ready handler)
 
         // ─── ISED Colocation Sites Layer ──────────────────────────────────────
         let isedLayer = null;
