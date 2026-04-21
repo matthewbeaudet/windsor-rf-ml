@@ -234,7 +234,7 @@ def _get_ised_sites(region_name=None):
 
     # Try local file first, then GCS
     if not tmp_path.exists():
-        local_ised = Path(__file__).parent / 'ISED Overview_Table.csv'
+        local_ised = Path(__file__).parent.parent / 'ISED Overview_Table.csv'
         if local_ised.exists():
             tmp_path = local_ised
             print(f"  OK Using local ISED CSV: {local_ised.name}")
@@ -318,8 +318,8 @@ def get_sites():
         base = Path(__file__).parent.parent
 
         if region_name == 'montreal':
-            mtl_csv = base / 'Montreal Full' / 'mtl_cells_1900_2100.csv'
-            df = pd.read_csv(mtl_csv, usecols=['Latitude', 'Longitude', 'Site'])
+            mtl_csv = Path(REGIONS['montreal'].h3_features_path).parent.parent / 'mtl_cells_1900_2100.csv'
+            df = pd.read_csv(mtl_csv, usecols=['Latitude', 'Longitude', 'Site'], encoding='latin-1')
             df = df.dropna(subset=['Latitude', 'Longitude']).drop_duplicates(subset=['Site'])
             sites = [
                 {'site_id': str(r['Site']), 'lat': round(float(r['Latitude']), 5), 'lon': round(float(r['Longitude']), 5)}
