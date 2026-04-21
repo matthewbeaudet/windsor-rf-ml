@@ -221,9 +221,11 @@ def baseline_coverage():
 
 _ised_sites_cache = None
 
-def _get_ised_sites():
-    """Load and deduplicate ISED Windsor sites from GCS CSV (cached)."""
+def _get_ised_sites(region_name=None):
+    """Load and deduplicate ISED sites from local/GCS CSV (cached per region)."""
     global _ised_sites_cache
+    if region_name is None:
+        region_name = _current_region_cfg.name
     if _ised_sites_cache is not None:
         return _ised_sites_cache
 
@@ -253,12 +255,13 @@ def _get_ised_sites():
 
     # Filter to Windsor by coordinates
     df = df.dropna(subset=['latitude', 'longitude'])
-    b = _current_region_cfg.bounds
+    region_cfg = REGIONS.get(region_name, _current_region_cfg)
+    b = region_cfg.bounds
     df = df[
         (df['latitude'].between(b['min_lat'], b['max_lat'])) &
         (df['longitude'].between(b['min_lon'], b['max_lon']))
     ].copy()
-    print(f"  ISED {_current_region_cfg.display_name} rows: {len(df):,}")
+    print(f"  ISED {region_cfg.display_name} rows: {len(df):,}")
 
     # Round to 4 decimal places (~11m) to deduplicate co-located sectors
     df['lat_r'] = df['latitude'].round(4)
@@ -290,9 +293,10 @@ def _get_ised_sites():
 
 @app.route('/api/ised_sites', methods=['GET'])
 def ised_sites():
-    """Return deduplicated ISED colocation sites for Windsor."""
+    """Return deduplicated ISED colocation sites for the current region."""
     try:
-        sites = _get_ised_sites()
+        region_name = request.args.get('region', _current_region_cfg.name)
+        sites = _get_ised_sites(region_name)
         return jsonify({'sites': sites})
     except Exception as e:
         print(f"Error in ised_sites: {e}")
@@ -305,12 +309,15 @@ def get_sites():
     Return all existing site locations. Region-aware:
       - Windsor:  dataset.csv + Cline/missing_sites_dataset.csv
       - Montreal: mtl_cells_1900_2100.csv
+    Accepts optional ?region= query param; falls back to _current_region_cfg.
     """
-    if not hasattr(get_sites, '_cached') or get_sites._cached is None:
+    region_name = request.args.get('region', _current_region_cfg.name)
+    cache_key = f'_cached_{region_name}'
+    if not hasattr(get_sites, cache_key) or getattr(get_sites, cache_key) is None:
         import pandas as pd
         base = Path(__file__).parent.parent
 
-        if _current_region_cfg.name == 'montreal':
+        if region_name == 'montreal':
             mtl_csv = base / 'Montreal Full' / 'mtl_cells_1900_2100.csv'
             df = pd.read_csv(mtl_csv, usecols=['Latitude', 'Longitude', 'Site'])
             df = df.dropna(subset=['Latitude', 'Longitude']).drop_duplicates(subset=['Site'])
@@ -341,8 +348,8 @@ def get_sites():
             ]
             print(f"  OK Sites loaded: {len(sites)} unique sites (merged from dataset.csv + missing_sites_dataset.csv)")
 
-        get_sites._cached = sites
-    return jsonify({'sites': get_sites._cached})
+        setattr(get_sites, cache_key, sites)
+    return jsonify({'sites': getattr(get_sites, cache_key)})
 
 
 @app.route('/api/search_candidates', methods=['POST'])
@@ -965,4 +972,4 @@ def save_png():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)

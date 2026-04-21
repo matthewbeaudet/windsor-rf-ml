@@ -1191,7 +1191,7 @@
 
         async function loadSites() {
             try {
-                const resp = await fetch('/api/sites');
+                const resp = await fetch('/api/sites?region=' + (_selectedRegion || 'windsor'));
                 const data = await resp.json();
                 const sites = data.sites;
 
@@ -1243,7 +1243,7 @@
 
         async function loadIsedSites() {
             try {
-                const resp = await fetch('/api/ised_sites');
+                const resp = await fetch('/api/ised_sites?region=' + (_selectedRegion || 'windsor'));
                 const data = await resp.json();
                 const markers = data.sites.map(s => {
                     const color = isedColor(s.licensees);
