@@ -229,13 +229,15 @@ def _get_ised_sites():
     for (lat_r, lon_r), group in df.groupby(['lat_r', 'lon_r']):
         def uniq(col):
             return sorted({str(v) for v in group[col].dropna() if str(v).strip()})
+        max_h = group['max_ant_height'].max()
         sites.append({
             'lat': float(lat_r),
             'lon': float(lon_r),
             'licensees': uniq('licensee_name'),
             'technologies': uniq('technology'),
             'bands': uniq('licence_category'),
-            'sectors': int(len(group))
+            'sectors': int(len(group)),
+            'max_ant_height': int(max_h) if pd.notna(max_h) else None,
         })
 
     print(f"  ✓ ISED sites deduplicated: {len(sites)} unique tower locations")

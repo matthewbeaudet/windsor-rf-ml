@@ -1150,6 +1150,7 @@
                             `Licensee(s): <strong>${s.licensees.join(', ')}</strong><br>` +
                             `Technologies: ${s.technologies.join(', ') || '—'}<br>` +
                             `Bands: ${s.bands.join(', ') || '—'}<br>` +
+                            `Max antenna height: ${s.max_ant_height != null ? s.max_ant_height + ' m' : '—'}<br>` +
                             `Licences at this location: ${s.sectors}`
                         );
                 });
