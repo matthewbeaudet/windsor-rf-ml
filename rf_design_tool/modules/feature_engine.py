@@ -356,7 +356,8 @@ class FeatureEngine:
     @staticmethod
     def compute_dsm_los(ant_lat: float, ant_lon: float, ant_height: float,
                         ue_lat: float, ue_lon: float, dist_m: float,
-                        dsm_lookup: dict, n_samples: int = 20) -> dict:
+                        dsm_lookup: dict, n_samples: int = 20,
+                        terrain_fallback: float = 183.0) -> dict:
         """
         Ray-trace from antenna to UE using real DEM + DSM surface heights (all ASL).
         Vectorized implementation: all sample points computed with NumPy, no Python loop
@@ -391,7 +392,7 @@ class FeatureEngine:
         if not dsm_lookup or dist_m <= 0:
             return _clear
 
-        FALLBACK_TERRAIN = self.terrain_elevation_fallback
+        FALLBACK_TERRAIN = terrain_fallback
         UE_HEIGHT_AGL    = 1.5     # UE sits 1.5m above the surface
 
         def _get(cell, key):
@@ -580,7 +581,8 @@ class FeatureEngine:
                 dsm_cache[h3_idx] = self.compute_dsm_los(
                     antenna_lat, antenna_lon, antenna_height,
                     ue_lat, ue_lon, dist_m,
-                    dsm_lookup, n_samples=20
+                    dsm_lookup, n_samples=20,
+                    terrain_fallback=self.terrain_elevation_fallback,
                 )
             # Write DSM LoS features to all rows (same value per bin across sectors)
             for col in ['dsm_los_ratio', 'dsm_los_binary', 'dsm_first_block_m', 'dsm_max_excess_m']:

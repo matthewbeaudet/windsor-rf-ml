@@ -66,15 +66,15 @@ class SitePredictor:
         # ── Environmental features ───────────────────────────────────────────
         print("  Preloading environmental features...")
         self.env_features = self.loader.load_environmental_features()
-        print(f"  ✓ {len(self.env_features):,} bins loaded")
+        print(f"  OK {len(self.env_features):,} bins loaded")
 
         # ── DSM database ─────────────────────────────────────────────────────
         print("  Preloading DSM database...")
         self.dsm_lookup = self.loader.load_dsm_database()
         if self.dsm_lookup:
-            print(f"  ✓ DSM database: {len(self.dsm_lookup):,} bins")
+            print(f"  OK DSM database: {len(self.dsm_lookup):,} bins")
         else:
-            print("  ⚠  DSM database not found — DSM LoS features use precomputed values")
+            print("  WARNING DSM database not found -- DSM LoS features use precomputed values")
 
         # ── Baseline ─────────────────────────────────────────────────────────
         baseline_path = Path(baseline_file) if baseline_file else self.cfg.baseline_path
@@ -88,10 +88,10 @@ class SitePredictor:
                 # Fallback: try the other known name
                 rsrp_col = 'predicted_rsrp' if rsrp_col == 'baseline_rsrp' else 'baseline_rsrp'
             self.baseline_dict = dict(zip(bl['h3_index'], bl[rsrp_col]))
-            print(f"  ✓ Baseline: {len(self.baseline_dict):,} bins  "
-                  f"({bl[rsrp_col].min():.1f} – {bl[rsrp_col].max():.1f} dBm)")
+            print(f"  OK Baseline: {len(self.baseline_dict):,} bins  "
+                  f"({bl[rsrp_col].min():.1f} to {bl[rsrp_col].max():.1f} dBm)")
         else:
-            print("  ⚠  No baseline file — improvement metrics unavailable")
+            print("  WARNING No baseline file -- improvement metrics unavailable")
             self.baseline = pd.DataFrame(columns=['h3_index', 'baseline_rsrp'])
             self.baseline_dict = {}
 
@@ -107,7 +107,13 @@ class SitePredictor:
         urban_model    = joblib.load(self.cfg.urban_model_path)
         suburban_model = joblib.load(self.cfg.suburban_model_path)
         with open(self.cfg.urban_poly_path) as f:
-            urban_poly = shape(json.load(f))
+            gj = json.load(f)
+        # Handle both raw geometry and FeatureCollection
+        if gj.get('type') == 'FeatureCollection':
+            gj = gj['features'][0]['geometry']
+        elif gj.get('type') == 'Feature':
+            gj = gj['geometry']
+        urban_poly = shape(gj)
         self._router = MontrealRouter(urban_model, suburban_model, urban_poly)
         print(f'  Montreal Urban + Suburban models loaded')
 
@@ -172,7 +178,7 @@ class SitePredictor:
             'has_baseline':      has_baseline,
         }
 
-        print(f"  ✓ {stats['total_bins']:,} bins  "
+        print(f"  OK {stats['total_bins']:,} bins  "
               f"improved: {stats['improved_bins']:,}  "
               f"footprint: {stats['site_footprint_bins']:,}")
 
