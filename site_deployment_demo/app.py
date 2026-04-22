@@ -706,7 +706,7 @@ def _load_bad_bins():
         return
 
     import os
-    bucket_name = os.environ.get('GCS_BUCKET', 'windsor-gcs')
+    bucket_name = os.environ.get('GCS_BUCKET', 'windsor-rf-ml-data')
     blob_name   = os.environ.get('GCS_BAD_BINS_BLOB', 'weekly_bad_imsis')
     tmp_path    = Path('/tmp/bad_bins_wnd.csv')
     local_path  = Path(__file__).parent / 'data' / 'bad_bins_wnd.csv'
