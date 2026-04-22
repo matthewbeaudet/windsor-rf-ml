@@ -561,10 +561,10 @@
                 Loading bad IMSI bins...
             </div>
             <div id="bad-imsi-legend" style="display:none; margin-top:4px; font-size:11px; color:#555;">
-                <span style="background:#ffeb3b; padding:1px 6px; border-radius:2px;">&lt;150</span>
-                <span style="background:#ff9800; color:#fff; padding:1px 6px; border-radius:2px;">150–250</span>
-                <span style="background:#f44336; color:#fff; padding:1px 6px; border-radius:2px;">250–400</span>
-                <span style="background:#7b0000; color:#fff; padding:1px 6px; border-radius:2px;">&gt;400</span>
+                <span style="background:rgba(255,190,60,0.5); padding:1px 6px; border-radius:2px;">100–200</span>
+                <span style="background:rgba(255,150,0,0.5); padding:1px 6px; border-radius:2px;">200–300</span>
+                <span style="background:rgba(230,110,0,0.5); padding:1px 6px; border-radius:2px;">300–400</span>
+                <span style="background:rgba(200,80,0,0.5); padding:1px 6px; border-radius:2px;">400+</span>
                 <span style="color:#888; margin-left:2px;">IMSIs</span>
             </div>
         </div>
@@ -1096,10 +1096,10 @@
         let badImsiRefreshTimer = null;
 
         function badImsiColor(count) {
-            if (count > 400) return '#7b0000';
-            if (count > 250) return '#f44336';
-            if (count > 150) return '#ff9800';
-            return '#ffeb3b';
+            if (count >= 400) return 'rgba(200, 80, 0, 0.5)';
+            if (count >= 300) return 'rgba(230, 110, 0, 0.5)';
+            if (count >= 200) return 'rgba(255, 150, 0, 0.5)';
+            return 'rgba(255, 190, 60, 0.5)';
         }
 
         async function refreshBadImsiLayer() {
@@ -1128,9 +1128,9 @@
                         return L.circleMarker(latlng, {
                             radius: r,
                             fillColor: badImsiColor(feature.properties.count),
-                            fillOpacity: 0.8,
-                            color: '#333',
-                            weight: 0.3
+                            fillOpacity: 1,
+                            color: 'none',
+                            weight: 0
                         });
                     },
                     onEachFeature: function(feature, layer) {
@@ -1168,46 +1168,65 @@
         let sitesLayer = null;
 
         // Tower icon for existing sites (blue triangle / cell tower style)
+        // TELUS cell tower SVG icon — used for Montreal (no sector GeoJSON yet)
         const existingSiteIcon = L.divIcon({
             className: '',
-            html: `<div style="
-                width: 0; height: 0;
-                border-left: 8px solid transparent;
-                border-right: 8px solid transparent;
-                border-bottom: 16px solid #1565c0;
-                filter: drop-shadow(0 1px 3px rgba(0,0,0,0.6));
-                position: relative;">
-                <div style="
-                    position: absolute;
-                    top: 16px; left: -3px;
-                    width: 6px; height: 5px;
-                    background: #1565c0;">
-                </div>
-            </div>`,
-            iconSize: [16, 21],
-            iconAnchor: [8, 21],
-            popupAnchor: [0, -22]
+            html: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="28" viewBox="0 0 20 28" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5))">
+                <rect x="9" y="10" width="2" height="16" fill="#4b286d"/>
+                <polygon points="5,26 15,26 11,10 9,10" fill="#4b286d"/>
+                <rect x="2" y="7" width="16" height="2" rx="1" fill="#4b286d"/>
+                <rect x="4" y="11" width="12" height="1.5" rx="0.75" fill="#4b286d"/>
+                <circle cx="2" cy="7" r="2" fill="#4b286d"/>
+                <circle cx="18" cy="7" r="2" fill="#4b286d"/>
+                <circle cx="10" cy="4" r="2" fill="#4b286d"/>
+            </svg>`,
+            iconSize: [20, 28],
+            iconAnchor: [10, 28],
+            popupAnchor: [0, -30]
         });
 
         async function loadSites() {
             try {
-                const resp = await fetch('/api/sites?region=' + (_selectedRegion || 'windsor'));
-                const data = await resp.json();
-                const sites = data.sites;
-
                 if (sitesLayer) { map.removeLayer(sitesLayer); sitesLayer = null; }
 
-                sitesLayer = L.layerGroup(
-                    sites.map(s => L.marker([s.lat, s.lon], { icon: existingSiteIcon })
-                        .bindPopup(`<strong>📡 Existing Site</strong><br>
-                            Site ID: <strong>${s.site_id}</strong><br>
-                            Lat: ${s.lat.toFixed(5)}<br>
-                            Lon: ${s.lon.toFixed(5)}`)
-                    )
-                ).addTo(map);
-
-                document.getElementById('sites-count').textContent = `(${sites.length})`;
-                console.log(`Existing sites loaded: ${sites.length}`);
+                if (_selectedRegion === 'windsor') {
+                    // Windsor: sector polygon GeoJSON
+                    const resp = await fetch('/api/site_sectors');
+                    const geojson = await resp.json();
+                    sitesLayer = L.geoJSON(geojson, {
+                        style: {
+                            fillColor: '#4b286d',
+                            fillOpacity: 0.45,
+                            color: '#4b286d',
+                            weight: 0.8,
+                            opacity: 0.7
+                        },
+                        onEachFeature: function(feature, layer) {
+                            const sid = feature.properties.SiteID || '';
+                            layer.bindPopup(`<strong>TELUS Site</strong><br>Site ID: <strong>${sid}</strong>`);
+                            layer.on('mouseover', () => layer.setStyle({ fillOpacity: 0.75, weight: 1.5 }));
+                            layer.on('mouseout',  () => layer.setStyle({ fillOpacity: 0.45, weight: 0.8 }));
+                        }
+                    }).addTo(map);
+                    const siteCount = new Set(geojson.features.map(f => f.properties.SiteID)).size;
+                    document.getElementById('sites-count').textContent = `(${siteCount})`;
+                    console.log(`Site sectors loaded: ${geojson.features.length} polygons, ${siteCount} sites`);
+                } else {
+                    // Montreal (and future regions): marker-based
+                    const resp = await fetch('/api/sites?region=' + _selectedRegion);
+                    const data = await resp.json();
+                    const sites = data.sites;
+                    sitesLayer = L.layerGroup(
+                        sites.map(s => L.marker([s.lat, s.lon], { icon: existingSiteIcon })
+                            .bindPopup(`<strong>TELUS Site</strong><br>
+                                Site ID: <strong>${s.site_id}</strong><br>
+                                Lat: ${s.lat.toFixed(5)}<br>
+                                Lon: ${s.lon.toFixed(5)}`)
+                        )
+                    ).addTo(map);
+                    document.getElementById('sites-count').textContent = `(${sites.length})`;
+                    console.log(`Sites loaded: ${sites.length}`);
+                }
             } catch (err) {
                 console.error('Failed to load sites:', err);
             }
