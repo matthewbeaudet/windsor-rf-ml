@@ -84,20 +84,24 @@ class DataLoader:
     
     def __init__(self, base_path: str = None,
                  h3_features_path: str = None,
-                 terrain_elevation_fallback: float = 183.0):
+                 terrain_elevation_fallback: float = 183.0,
+                 dsm_path: str = None,
+                 dem_path: str = None):
         """
         Args:
             base_path: Base path to data directory. If None, uses parent directory.
             h3_features_path: Full path to H3 environmental features CSV.
-                Overrides the default Windsor path when provided.
-            terrain_elevation_fallback: Default terrain elevation (m ASL) for bins
-                missing DEM data. Windsor ~183 m; Montreal ~50 m.
+            terrain_elevation_fallback: Default terrain elevation (m ASL).
+            dsm_path: Full path to DSM CSV (h3_index, p95_height). Overrides default.
+            dem_path: Full path to DEM CSV (h3_index, dem_mean). Overrides default.
         """
         if base_path is None:
             self.base_path = Path(__file__).parent.parent.parent
         else:
             self.base_path = Path(base_path)
         self._h3_features_path_override = Path(h3_features_path) if h3_features_path else None
+        self._dsm_path_override = Path(dsm_path) if dsm_path else None
+        self._dem_path_override = Path(dem_path) if dem_path else None
         self.terrain_elevation_fallback = terrain_elevation_fallback
         
         logger.info(f"Data loader initialized with base path: {self.base_path}")
@@ -419,8 +423,8 @@ class DataLoader:
         if self._dsm_lookup is not None and not force_reload:
             return self._dsm_lookup
 
-        dem_path = _resolve_path(self.base_path / "h3_dem_database.csv", "h3_dem_database.csv")
-        dsm_path = _resolve_path(self.base_path / "h3_dsm_clutter_database.csv", "h3_dsm_clutter_database.csv")
+        dem_path = self._dem_path_override or _resolve_path(self.base_path / "h3_dem_database.csv", "h3_dem_database.csv")
+        dsm_path = self._dsm_path_override or _resolve_path(self.base_path / "h3_dsm_clutter_database.csv", "h3_dsm_clutter_database.csv")
 
         if not dsm_path.exists():
             logger.warning(f"DSM database not found at {dsm_path}. DSM LoS features will default to 0.")

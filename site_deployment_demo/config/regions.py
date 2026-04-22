@@ -32,6 +32,9 @@ class RegionConfig:
     model_min5_path: Optional[Path] = None
     features_path: Optional[Path] = None
     features_min5_path: Optional[Path] = None
+    # DSM/DEM paths (None = use data loader defaults at repo root)
+    dsm_path: Optional[Path] = None   # h3_index, p95_height
+    dem_path: Optional[Path] = None   # h3_index, dem_mean
     # Dual-model region (Montreal)
     urban_model_path: Optional[Path] = None
     suburban_model_path: Optional[Path] = None
@@ -77,6 +80,8 @@ MONTREAL = RegionConfig(
     urban_features_path=_MTL / 'Model' / 'lgbm_montreal_53feat_urban_features.json',
     suburban_features_path=_MTL / 'Model' / 'lgbm_montreal_53feat_suburban_features.json',
     urban_poly_path=_MTL / 'urban_mtl.geojson',
+    dsm_path=_MTL / 'H3_Databases' / 'h3_dsm_database_montreal.csv',
+    dem_path=_MTL / 'H3_Databases' / 'h3_dem_database_montreal.csv',
 )
 
 REGIONS = {

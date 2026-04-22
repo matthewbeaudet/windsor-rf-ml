@@ -34,6 +34,8 @@ class SitePredictor:
             str(parent_dir),
             h3_features_path=str(self.cfg.h3_features_path),
             terrain_elevation_fallback=self.cfg.terrain_elevation_m,
+            dsm_path=str(self.cfg.dsm_path) if self.cfg.dsm_path else None,
+            dem_path=str(self.cfg.dem_path) if self.cfg.dem_path else None,
         )
 
         # ── Load models ──────────────────────────────────────────────────────
