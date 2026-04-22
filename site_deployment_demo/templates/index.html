@@ -1051,52 +1051,37 @@
             }
         });
 
-        // ─── Existing Site Markers ────────────────────────────────────────────
+        // ─── Existing Site Sectors ────────────────────────────────────────────
         let sitesLayer = null;
-
-        // TELUS cell tower SVG icon for existing sites
-        const existingSiteIcon = L.divIcon({
-            className: '',
-            html: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="28" viewBox="0 0 20 28" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5))">
-                <!-- mast -->
-                <rect x="9" y="10" width="2" height="16" fill="#4b286d"/>
-                <!-- base spread -->
-                <polygon points="5,26 15,26 11,10 9,10" fill="#4b286d"/>
-                <!-- crossarm top -->
-                <rect x="2" y="7" width="16" height="2" rx="1" fill="#4b286d"/>
-                <!-- crossarm mid -->
-                <rect x="4" y="11" width="12" height="1.5" rx="0.75" fill="#4b286d"/>
-                <!-- antenna discs -->
-                <circle cx="2" cy="7" r="2" fill="#4b286d"/>
-                <circle cx="18" cy="7" r="2" fill="#4b286d"/>
-                <circle cx="10" cy="4" r="2" fill="#4b286d"/>
-            </svg>`,
-            iconSize: [20, 28],
-            iconAnchor: [10, 28],
-            popupAnchor: [0, -30]
-        });
 
         async function loadSites() {
             try {
-                const resp = await fetch('/api/sites');
-                const data = await resp.json();
-                const sites = data.sites;
+                const resp = await fetch('/api/site_sectors');
+                const geojson = await resp.json();
 
                 if (sitesLayer) { map.removeLayer(sitesLayer); sitesLayer = null; }
 
-                sitesLayer = L.layerGroup(
-                    sites.map(s => L.marker([s.lat, s.lon], { icon: existingSiteIcon })
-                        .bindPopup(`<strong>📡 Existing Site</strong><br>
-                            Site ID: <strong>${s.site_id}</strong><br>
-                            Lat: ${s.lat.toFixed(5)}<br>
-                            Lon: ${s.lon.toFixed(5)}`)
-                    )
-                ).addTo(map);
+                sitesLayer = L.geoJSON(geojson, {
+                    style: {
+                        fillColor: '#4b286d',
+                        fillOpacity: 0.45,
+                        color: '#4b286d',
+                        weight: 0.8,
+                        opacity: 0.7
+                    },
+                    onEachFeature: function(feature, layer) {
+                        const sid = feature.properties.SiteID || '';
+                        layer.bindPopup(`<strong>TELUS Site</strong><br>Site ID: <strong>${sid}</strong>`);
+                        layer.on('mouseover', () => layer.setStyle({ fillOpacity: 0.75, weight: 1.5 }));
+                        layer.on('mouseout',  () => layer.setStyle({ fillOpacity: 0.45, weight: 0.8 }));
+                    }
+                }).addTo(map);
 
-                document.getElementById('sites-count').textContent = `(${sites.length})`;
-                console.log(`Existing sites loaded: ${sites.length}`);
+                const siteCount = new Set(geojson.features.map(f => f.properties.SiteID)).size;
+                document.getElementById('sites-count').textContent = `(${siteCount})`;
+                console.log(`Site sectors loaded: ${geojson.features.length} polygons, ${siteCount} sites`);
             } catch (err) {
-                console.error('Failed to load sites:', err);
+                console.error('Failed to load site sectors:', err);
             }
         }
 

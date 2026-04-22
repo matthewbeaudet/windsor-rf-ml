@@ -186,6 +186,34 @@ def baseline_coverage():
         return jsonify({'error': str(e)}), 500
 
 
+_site_sectors_cache = None
+
+def _get_site_sectors():
+    """Load Windsor antenna sector wedges from bundled GeoJSON (cached)."""
+    global _site_sectors_cache
+    if _site_sectors_cache is not None:
+        return _site_sectors_cache
+    import json
+    geojson_path = Path(__file__).parent / 'data' / 'windsor_sectors.geojson'
+    if not geojson_path.exists():
+        _site_sectors_cache = {'type': 'FeatureCollection', 'features': []}
+        return _site_sectors_cache
+    with open(geojson_path) as f:
+        _site_sectors_cache = json.load(f)
+    print(f'  ✓ Site sectors loaded: {len(_site_sectors_cache["features"])} sector polygons')
+    return _site_sectors_cache
+
+
+@app.route('/api/site_sectors', methods=['GET'])
+def site_sectors():
+    """Return Windsor antenna sector wedge polygons as GeoJSON."""
+    try:
+        return jsonify(_get_site_sectors())
+    except Exception as e:
+        print(f'Error in site_sectors: {e}')
+        return jsonify({'error': str(e)}), 500
+
+
 _ised_sites_cache = None
 
 def _get_ised_sites():
