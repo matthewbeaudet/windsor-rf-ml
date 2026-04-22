@@ -706,7 +706,8 @@ def _load_bad_bins():
         return
 
     import os
-    bucket_name = os.environ.get('GCS_BUCKET', 'windsor-rf-ml-data')
+    bucket_name = os.environ.get('GCS_BUCKET', 'windsor-gcs')
+    blob_name   = os.environ.get('GCS_BAD_BINS_BLOB', 'weekly_bad_imsis')
     tmp_path    = Path('/tmp/bad_bins_wnd.csv')
     local_path  = Path(__file__).parent / 'data' / 'bad_bins_wnd.csv'
 
@@ -715,9 +716,9 @@ def _load_bad_bins():
         try:
             from google.cloud import storage as gcs
             client = gcs.Client()
-            blob = client.bucket(bucket_name).blob('bad_bins_wnd.csv')
+            blob = client.bucket(bucket_name).blob(blob_name)
             blob.download_to_filename(str(tmp_path))
-            print(f"  OK Downloaded bad_bins_wnd.csv from GCS (weekly data)")
+            print(f"  OK Downloaded {blob_name} from GCS bucket {bucket_name} (weekly data)")
         except Exception as e:
             print(f"  WARN GCS download failed: {e} -- using local fallback")
 
