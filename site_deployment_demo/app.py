@@ -673,27 +673,39 @@ def _load_bad_bins():
         return
 
     import os
-    local_path = Path(__file__).parent / 'data' / 'bad_bins_wnd.csv'
+    bucket_name = os.environ.get('GCS_BUCKET', 'windsor-gcs')
+    blob_name   = os.environ.get('GCS_BAD_BINS_BLOB', 'weekly_bad_imsis')
+    tmp_path    = Path('/tmp/bad_bins_wnd.csv')
+    local_path  = Path(__file__).parent / 'data' / 'bad_bins_wnd.csv'
 
-    # GCS fallback for Cloud Run
-    if not local_path.exists():
-        bucket_name = os.environ.get('GCS_BUCKET', 'windsor-rf-ml-data')
-        tmp_path = Path('/tmp/bad_bins_wnd.csv')
-        if not tmp_path.exists():
-            try:
-                from google.cloud import storage as gcs
-                client = gcs.Client()
-                blob = client.bucket(bucket_name).blob('bad_bins_wnd.csv')
-                blob.download_to_filename(str(tmp_path))
-                print(f"  ✓ Downloaded bad_bins_wnd.csv from GCS")
-            except Exception as e:
-                print(f"  ✗ GCS download failed for bad_bins_wnd.csv: {e}")
-                _bad_bins_df   = pd.DataFrame(columns=['h3_index','lat','lon','bad_ce_ims'])
-                _bad_bins_dict = {}
-                return
-        local_path = tmp_path
+    # GCS-first: weekly BigQuery export overwrites this file
+    if not tmp_path.exists():
+        try:
+            from google.cloud import storage as gcs
+            client = gcs.Client()
+            blob = client.bucket(bucket_name).blob(blob_name)
+            blob.download_to_filename(str(tmp_path))
+            print(f"  OK Downloaded {blob_name} from GCS bucket {bucket_name} (weekly data)")
+        except Exception as e:
+            print(f"  WARN GCS download failed: {e} -- using local fallback")
 
-    df = pd.read_csv(local_path)
+    source = tmp_path if tmp_path.exists() else local_path
+    if not source.exists():
+        _bad_bins_df   = pd.DataFrame(columns=['h3_index', 'lat', 'lon', 'bad_ce_ims'])
+        _bad_bins_dict = {}
+        return
+
+    df = pd.read_csv(source)
+
+    # BQ export has (quadbin, bad_ce_ims); local fallback already has h3_index
+    if 'quadbin' in df.columns and 'h3_index' not in df.columns:
+        import quadbin as qb
+        import h3 as h3lib
+        centers        = [qb.cell_to_point(int(c))['coordinates'] for c in df['quadbin']]
+        df['lon']      = [c[0] for c in centers]
+        df['lat']      = [c[1] for c in centers]
+        df['h3_index'] = [h3lib.latlng_to_cell(lat, lon, 12)
+                          for lat, lon in zip(df['lat'], df['lon'])]
     df['lat'] = df['lat'].round(5)
     df['lon'] = df['lon'].round(5)
     _bad_bins_df   = df
