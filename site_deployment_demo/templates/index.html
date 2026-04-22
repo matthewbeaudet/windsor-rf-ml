@@ -506,10 +506,10 @@
                 Loading bad IMSI bins...
             </div>
             <div id="bad-imsi-legend" style="display:none; margin-top:4px; font-size:11px; color:#555;">
-                <span style="background:#ffeb3b; padding:1px 6px; border-radius:2px;">&lt;150</span>
-                <span style="background:#ff9800; color:#fff; padding:1px 6px; border-radius:2px;">150–250</span>
-                <span style="background:#f44336; color:#fff; padding:1px 6px; border-radius:2px;">250–400</span>
-                <span style="background:#7b0000; color:#fff; padding:1px 6px; border-radius:2px;">&gt;400</span>
+                <span style="background:rgba(255,190,60,0.5); padding:1px 6px; border-radius:2px;">100–200</span>
+                <span style="background:rgba(255,150,0,0.5); padding:1px 6px; border-radius:2px;">200–300</span>
+                <span style="background:rgba(230,110,0,0.5); padding:1px 6px; border-radius:2px;">300–400</span>
+                <span style="background:rgba(200,80,0,0.5); padding:1px 6px; border-radius:2px;">400+</span>
                 <span style="color:#888; margin-left:2px;">IMSIs</span>
             </div>
         </div>
@@ -981,10 +981,10 @@
         let badImsiRefreshTimer = null;
 
         function badImsiColor(count) {
-            if (count > 400) return '#7b0000';
-            if (count > 250) return '#f44336';
-            if (count > 150) return '#ff9800';
-            return '#ffeb3b';
+            if (count >= 400) return 'rgba(200, 80, 0, 0.5)';
+            if (count >= 300) return 'rgba(230, 110, 0, 0.5)';
+            if (count >= 200) return 'rgba(255, 150, 0, 0.5)';
+            return 'rgba(255, 190, 60, 0.5)';
         }
 
         async function refreshBadImsiLayer() {
@@ -1003,19 +1003,21 @@
                 if (badImsiLayer) { map.removeLayer(badImsiLayer); badImsiLayer = null; }
                 if (!badImsiVisible) return;
                 const r = dotRadius();
-                const features = (data.points || []).map(p => ({
-                    type: 'Feature',
-                    geometry: { type: 'Point', coordinates: [p[1], p[0]] },
-                    properties: { count: p[2] }
-                }));
+                const features = (data.points || [])
+                    .filter(p => p[2] >= 100)
+                    .map(p => ({
+                        type: 'Feature',
+                        geometry: { type: 'Point', coordinates: [p[1], p[0]] },
+                        properties: { count: p[2] }
+                    }));
                 badImsiLayer = L.geoJSON({ type: 'FeatureCollection', features }, {
                     pointToLayer: function(feature, latlng) {
                         return L.circleMarker(latlng, {
                             radius: r,
                             fillColor: badImsiColor(feature.properties.count),
-                            fillOpacity: 0.8,
-                            color: '#333',
-                            weight: 0.3
+                            fillOpacity: 1,
+                            color: 'none',
+                            weight: 0
                         });
                     },
                     onEachFeature: function(feature, layer) {
@@ -1052,26 +1054,26 @@
         // ─── Existing Site Markers ────────────────────────────────────────────
         let sitesLayer = null;
 
-        // Tower icon for existing sites (blue triangle / cell tower style)
+        // TELUS cell tower SVG icon for existing sites
         const existingSiteIcon = L.divIcon({
             className: '',
-            html: `<div style="
-                width: 0; height: 0;
-                border-left: 8px solid transparent;
-                border-right: 8px solid transparent;
-                border-bottom: 16px solid #1565c0;
-                filter: drop-shadow(0 1px 3px rgba(0,0,0,0.6));
-                position: relative;">
-                <div style="
-                    position: absolute;
-                    top: 16px; left: -3px;
-                    width: 6px; height: 5px;
-                    background: #1565c0;">
-                </div>
-            </div>`,
-            iconSize: [16, 21],
-            iconAnchor: [8, 21],
-            popupAnchor: [0, -22]
+            html: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="28" viewBox="0 0 20 28" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5))">
+                <!-- mast -->
+                <rect x="9" y="10" width="2" height="16" fill="#4b286d"/>
+                <!-- base spread -->
+                <polygon points="5,26 15,26 11,10 9,10" fill="#4b286d"/>
+                <!-- crossarm top -->
+                <rect x="2" y="7" width="16" height="2" rx="1" fill="#4b286d"/>
+                <!-- crossarm mid -->
+                <rect x="4" y="11" width="12" height="1.5" rx="0.75" fill="#4b286d"/>
+                <!-- antenna discs -->
+                <circle cx="2" cy="7" r="2" fill="#4b286d"/>
+                <circle cx="18" cy="7" r="2" fill="#4b286d"/>
+                <circle cx="10" cy="4" r="2" fill="#4b286d"/>
+            </svg>`,
+            iconSize: [20, 28],
+            iconAnchor: [10, 28],
+            popupAnchor: [0, -30]
         });
 
         async function loadSites() {
