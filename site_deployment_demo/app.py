@@ -662,6 +662,29 @@ def clutter_heights():
         return jsonify({'error': str(e)}), 500
 
 
+def _morton_compact(x):
+    """Extract every other bit (one axis of a Morton-coded pair)."""
+    x &= 0x5555555555555555
+    x = (x | (x >>  1)) & 0x3333333333333333
+    x = (x | (x >>  2)) & 0x0f0f0f0f0f0f0f0f
+    x = (x | (x >>  4)) & 0x00ff00ff00ff00ff
+    x = (x | (x >>  8)) & 0x0000ffff0000ffff
+    x = (x | (x >> 16)) & 0x00000000ffffffff
+    return x
+
+def _quadbin_center(cell):
+    """Return (lon, lat) center of a Carto quadbin cell. Pure Python, no package."""
+    import math
+    resolution = (cell >> 52) & 0x1F
+    payload    = cell & ((1 << 52) - 1)
+    x = _morton_compact(payload)
+    y = _morton_compact(payload >> 1)
+    n   = 1 << resolution
+    lon = (x + 0.5) / n * 360.0 - 180.0
+    lat = math.degrees(math.atan(math.sinh(math.pi * (1.0 - 2.0 * (y + 0.5) / n))))
+    return lon, lat
+
+
 # ── Bad IMSI bins ─────────────────────────────────────────────────────────────
 # Loaded once at startup from data/bad_bins_wnd.csv (or GCS fallback)
 _bad_bins_df   = None   # DataFrame: h3_index, lat, lon, bad_ce_ims
@@ -699,13 +722,12 @@ def _load_bad_bins():
 
     # BQ export has (quadbin, bad_ce_ims); local fallback already has h3_index
     if 'quadbin' in df.columns and 'h3_index' not in df.columns:
-        import quadbin as qb
         import h3 as h3lib
-        centers        = [qb.cell_to_point(int(c))['coordinates'] for c in df['quadbin']]
-        df['lon']      = [c[0] for c in centers]
-        df['lat']      = [c[1] for c in centers]
+        lons_lats      = [_quadbin_center(int(c)) for c in df['quadbin']]
+        df['lon']      = [p[0] for p in lons_lats]
+        df['lat']      = [p[1] for p in lons_lats]
         df['h3_index'] = [h3lib.latlng_to_cell(lat, lon, 12)
-                          for lat, lon in zip(df['lat'], df['lon'])]
+                          for lon, lat in lons_lats]
     df['lat'] = df['lat'].round(5)
     df['lon'] = df['lon'].round(5)
     _bad_bins_df   = df
