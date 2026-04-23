@@ -163,7 +163,18 @@ class SitePredictor:
             h3_resolution=h3_resolution, dsm_lookup=self.dsm_lookup,
         )
 
-        improvements_df   = self._calculate_improvements(predictions)
+        improvements_df = self._calculate_improvements(predictions)
+
+        # Clip to DSM extent (island boundary) when DSM data is available
+        if self.dsm_lookup:
+            before = len(improvements_df)
+            improvements_df = improvements_df[
+                improvements_df['h3_index'].isin(self.dsm_lookup)
+            ]
+            clipped = before - len(improvements_df)
+            if clipped:
+                print(f"  Clipped {clipped:,} bins outside DSM extent")
+
         geojson           = self._to_geojson(improvements_df)
         footprint_geojson = self._footprint_to_geojson(improvements_df)
 
