@@ -65,6 +65,46 @@ def _download_from_gcs():
 _download_from_gcs()
 
 
+_GCS_FILES_MONTREAL = {
+    "montreal/h3_complete_features_montreal.csv":         "/tmp/h3_complete_features_montreal.csv",
+    "montreal/h3_dsm_database_montreal.csv":              "/tmp/h3_dsm_database_montreal.csv",
+    "montreal/h3_dem_database_montreal.csv":              "/tmp/h3_dem_database_montreal.csv",
+    "montreal/montreal_baseline_rsrp.csv":                "/tmp/montreal_baseline_rsrp.csv",
+    "montreal/lgbm_montreal_53feat_urban_model.joblib":   "/tmp/lgbm_montreal_53feat_urban_model.joblib",
+    "montreal/lgbm_montreal_53feat_suburban_model.joblib":"/tmp/lgbm_montreal_53feat_suburban_model.joblib",
+    "montreal/lgbm_montreal_53feat_urban_features.json":  "/tmp/lgbm_montreal_53feat_urban_features.json",
+    "montreal/lgbm_montreal_53feat_suburban_features.json":"/tmp/lgbm_montreal_53feat_suburban_features.json",
+    "montreal/urban_mtl.geojson":                         "/tmp/urban_mtl.geojson",
+    "montreal/mtl_cells_1900_2100.csv":                   "/tmp/mtl_cells_1900_2100.csv",
+}
+
+
+def download_region_files(region_name: str):
+    """Download Montreal data files from GCS lazily (only when Montreal is selected).
+    No-op locally (GCS_BUCKET not set) and skips files already in /tmp/."""
+    if "GCS_BUCKET" not in os.environ:
+        return
+    if region_name != "montreal":
+        return
+    try:
+        from google.cloud import storage
+        client = storage.Client()
+        bucket = client.bucket(_GCS_BUCKET)
+        print(f"GCS: downloading Montreal data files from gs://{_GCS_BUCKET}/montreal/")
+        for gcs_name, local_path in _GCS_FILES_MONTREAL.items():
+            if Path(local_path).exists():
+                print(f"  ✓ Already present: {local_path}")
+                continue
+            blob = bucket.blob(gcs_name)
+            print(f"  ↓ {gcs_name}")
+            blob.download_to_filename(local_path)
+            print(f"  ✓ Done: {local_path}")
+        print("GCS: Montreal files ready.\n")
+    except Exception as e:
+        print(f"GCS Montreal download failed: {e}")
+        raise
+
+
 def _resolve_path(local_path: Path, tmp_name: str) -> Path:
     """
     Return /tmp/<tmp_name> if running on Cloud Run (file was downloaded from GCS),
@@ -82,17 +122,27 @@ logger = logging.getLogger(__name__)
 class DataLoader:
     """Handles loading all required datasets and models"""
     
-    def __init__(self, base_path: str = None):
+    def __init__(self, base_path: str = None,
+                 h3_features_path: str = None,
+                 terrain_elevation_fallback: float = 183.0,
+                 dsm_path: str = None,
+                 dem_path: str = None):
         """
-        Initialize data loader
-        
         Args:
             base_path: Base path to data directory. If None, uses parent directory.
+            h3_features_path: Full path to H3 environmental features CSV.
+            terrain_elevation_fallback: Default terrain elevation (m ASL).
+            dsm_path: Full path to DSM CSV (h3_index, p95_height). Overrides default.
+            dem_path: Full path to DEM CSV (h3_index, dem_mean). Overrides default.
         """
         if base_path is None:
             self.base_path = Path(__file__).parent.parent.parent
         else:
             self.base_path = Path(base_path)
+        self._h3_features_path_override = Path(h3_features_path) if h3_features_path else None
+        self._dsm_path_override = Path(dsm_path) if dsm_path else None
+        self._dem_path_override = Path(dem_path) if dem_path else None
+        self.terrain_elevation_fallback = terrain_elevation_fallback
         
         logger.info(f"Data loader initialized with base path: {self.base_path}")
         
@@ -161,12 +211,16 @@ class DataLoader:
         
         logger.info("Loading environmental features from COMPLETE augmented database...")
         
-        # Load COMPLETE augmented database (1.7M bins for entire Windsor)
-        # Prefer /tmp/ on Cloud Run (downloaded from GCS), fall back to local path
-        complete_db_path = _resolve_path(
-            self.base_path / "h3_complete_features_windsor.csv",
-            "h3_complete_features_windsor.csv"
-        )
+        # Load H3 environmental features database.
+        # If an override path was provided at construction, use it directly.
+        # Otherwise prefer /tmp/ (GCS download on Cloud Run) then local Windsor path.
+        if self._h3_features_path_override:
+            complete_db_path = self._h3_features_path_override
+        else:
+            complete_db_path = _resolve_path(
+                self.base_path / "h3_complete_features_windsor.csv",
+                "h3_complete_features_windsor.csv"
+            )
 
         if not complete_db_path.exists():
             logger.warning(f"Complete augmented database not found at {complete_db_path}")
@@ -409,8 +463,8 @@ class DataLoader:
         if self._dsm_lookup is not None and not force_reload:
             return self._dsm_lookup
 
-        dem_path = _resolve_path(self.base_path / "h3_dem_database.csv", "h3_dem_database.csv")
-        dsm_path = _resolve_path(self.base_path / "h3_dsm_clutter_database.csv", "h3_dsm_clutter_database.csv")
+        dem_path = self._dem_path_override or _resolve_path(self.base_path / "h3_dem_database.csv", "h3_dem_database.csv")
+        dsm_path = self._dsm_path_override or _resolve_path(self.base_path / "h3_dsm_clutter_database.csv", "h3_dsm_clutter_database.csv")
 
         if not dsm_path.exists():
             logger.warning(f"DSM database not found at {dsm_path}. DSM LoS features will default to 0.")
@@ -436,7 +490,7 @@ class DataLoader:
                            f"Will fall back to Windsor default terrain (183m ASL).")
 
         # ── Merge: all DSM bins, add DEM where available ──────────────────────
-        WINDSOR_TERRAIN_ASL = 183.0   # fallback if DEM missing for a bin
+        WINDSOR_TERRAIN_ASL = self.terrain_elevation_fallback
         self._dsm_lookup = {
             idx: {
                 "dem": dem_dict.get(idx, WINDSOR_TERRAIN_ASL),

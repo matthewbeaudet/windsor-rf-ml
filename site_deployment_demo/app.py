@@ -6,42 +6,75 @@ Interactive demo for testing site deployment locations
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 import sys
-import io
+import json
 import threading
 import pandas as pd
 from pathlib import Path
 
-# Add parent directory to path to import rf_design_tool modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from api.site_predictor import SitePredictor
+from config.regions import REGIONS, WINDSOR
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for development
+CORS(app)
 
-# ── Startup initialization ────────────────────────────────────────────────────
-# Predictor is loaded in a background thread so Flask can bind the port and
-# serve the loading screen immediately. _startup_log streams progress to the UI.
-
-predictor = None
-_startup_log = []
+# ── Startup state ─────────────────────────────────────────────────────────────
+predictor      = None
+_startup_log   = []
 _startup_ready = False
 _startup_error = None
+_current_region_cfg = WINDSOR   # set by /api/init before background thread starts
 
-def _init_predictor_background():
-    global predictor, _startup_ready, _startup_error
+
+def _init_predictor_background(region_cfg):
+    global predictor, _startup_ready, _startup_error, _baseline_with_coords, _clutter_height_index, _clutter_layer_index, _baseline_hexes
+    _baseline_with_coords = None
+    _clutter_height_index = None
+    _clutter_layer_index  = None
+    _baseline_hexes       = {}
     try:
-        _startup_log.append('> Initializing Windsor RF ML Tool...')
+        _startup_log.append(f'> Initializing {region_cfg.display_name} RF ML Tool...')
         _startup_log.append('> Loading ML models and environmental data...')
-        predictor = SitePredictor()
+        from rf_design_tool.modules.data_loader import download_region_files
+        download_region_files(region_cfg.name)
+        _load_bad_bins(region_cfg.name)
+        predictor = SitePredictor(region_config=region_cfg)
         _startup_log.append('> Baseline network loaded.')
+        _startup_log.append('> Pre-computing coverage layers...')
+        _get_baseline_with_coords()
+        _build_baseline_hexes()
         _startup_log.append('> System ready.')
         _startup_ready = True
     except Exception as e:
         _startup_error = str(e)
         _startup_log.append(f'> ERROR: {e}')
 
-threading.Thread(target=_init_predictor_background, daemon=True).start()
+
+@app.route('/api/init', methods=['POST'])
+def init_region():
+    """
+    Select region and start background initialization.
+    Must be called before /api/status is polled.
+    """
+    global _current_region_cfg, _startup_log, _startup_ready, _startup_error, predictor, _ised_sites_cache, _bad_bins_df, _bad_bins_dict
+    region_name = (request.json or {}).get('region', 'windsor')
+    cfg = REGIONS.get(region_name, WINDSOR)
+    _current_region_cfg = cfg
+    # Reset startup state and region-dependent caches
+    predictor         = None
+    _startup_log      = []
+    _startup_ready    = False
+    _startup_error    = None
+    _ised_sites_cache = None   # force reload with correct region bounds
+    get_sites._cached = None   # force reload with correct region sites
+    _bad_bins_df      = None   # force reload for new region
+    _bad_bins_dict    = None
+    threading.Thread(
+        target=_init_predictor_background, args=(cfg,), daemon=True
+    ).start()
+    return jsonify({'region': cfg.name, 'display_name': cfg.display_name})
 
 def _get_predictor():
     if predictor is None:
@@ -101,9 +134,9 @@ def predict_site():
         h3_res = 12
 
         if height is None:
-            print(f"Predicting site at ({lat:.4f}, {lon:.4f}), zoom={zoom} → H3 res {h3_res}, radius={radius}m")
+            print(f"Predicting site at ({lat:.4f}, {lon:.4f}), zoom={zoom}, H3 res {h3_res}, radius={radius}m")
         else:
-            print(f"Predicting site at ({lat:.4f}, {lon:.4f}), height={height}m, zoom={zoom} → H3 res {h3_res}, radius={radius}m")
+            print(f"Predicting site at ({lat:.4f}, {lon:.4f}), height={height}m, zoom={zoom}, H3 res {h3_res}, radius={radius}m")
 
         # Run prediction
         result = _get_predictor().predict_site_deployment(
@@ -123,7 +156,7 @@ def predict_site():
         # Count bad IMSIs covered by the prediction footprint
         result['stats']['covered_bad_imsis'] = _covered_bad_imsis(result.get('footprint_geojson'))
 
-        print(f"  → {result['stats']['improved_bins']} bins improved by ≥3dB  "
+        print(f"  {result['stats']['improved_bins']} bins improved by >=3dB  "
               f"/ {result['stats']['covered_bad_imsis']:,} bad IMSIs covered")
         
         return jsonify(result)
@@ -136,6 +169,7 @@ def predict_site():
 
 # Pre-build baseline lookup with lat/lon at startup for fast viewport queries
 _baseline_with_coords = None
+_baseline_hexes       = {}   # {res: DataFrame(h3_index, predicted_rsrp, lat, lon)}
 # Cached clutter-height index (lat/lon for all bins with clutter_height > 0)
 _clutter_height_index = None
 
@@ -145,41 +179,77 @@ def _get_baseline_with_coords():
     if _baseline_with_coords is None:
         import h3 as h3lib
         print("Building baseline coordinate index...")
-        df = _get_predictor().baseline.copy()
+        p = _get_predictor()
+        df = p.baseline.copy()
+        if df.empty:
+            _baseline_with_coords = df
+            return _baseline_with_coords
+        # Normalise RSRP column to 'predicted_rsrp' for the API response
+        rsrp_col = p.cfg.baseline_rsrp_col
+        if rsrp_col in df.columns and rsrp_col != 'predicted_rsrp':
+            df = df.rename(columns={rsrp_col: 'predicted_rsrp'})
         coords = [h3lib.cell_to_latlng(idx) for idx in df['h3_index']]
         df['lat'] = [round(c[0], 5) for c in coords]
         df['lon'] = [round(c[1], 5) for c in coords]
         _baseline_with_coords = df
-        print(f"  ✓ Baseline coordinate index built: {len(df):,} bins")
+        print(f"  OK Baseline coordinate index: {len(df):,} bins")
     return _baseline_with_coords
+
+
+def _build_baseline_hexes():
+    global _baseline_hexes
+    import h3 as h3lib
+    df = _get_baseline_with_coords()
+    if df is None or df.empty:
+        return
+    _baseline_hexes = {}
+    for res in (5, 6, 7, 8, 9, 10, 11, 12):
+        tmp = df.copy()
+        tmp['display_hex'] = tmp['h3_index'].apply(
+            lambda x: h3lib.cell_to_parent(x, res) if h3lib.get_resolution(x) > res else x
+        )
+        agg = tmp.groupby('display_hex')['predicted_rsrp'].mean().round(1).reset_index()
+        agg.columns = ['h3_index', 'predicted_rsrp']
+        centers = [h3lib.cell_to_latlng(h) for h in agg['h3_index']]
+        agg['lat'] = [c[0] for c in centers]
+        agg['lon'] = [c[1] for c in centers]
+        _baseline_hexes[res] = agg
+    print(f"  OK Hex layers: {', '.join(f'res{r}={len(_baseline_hexes[r]):,}' for r in sorted(_baseline_hexes))}")
+
+
+def _zoom_to_h3_res(zoom):
+    if zoom >= 16: return 12
+    if zoom >= 14: return 11
+    if zoom >= 12: return 10
+    if zoom >= 10: return 9
+    if zoom >= 8:  return 8
+    if zoom >= 6:  return 7
+    if zoom >= 4:  return 6
+    return 5
 
 
 @app.route('/api/baseline_coverage', methods=['GET'])
 def baseline_coverage():
-    """
-    Return baseline coverage for the current map viewport.
-    Accepts bounding box params: min_lat, max_lat, min_lon, max_lon
-    Only returns bins within the viewport for performance.
-    """
     try:
-        min_lat = float(request.args.get('min_lat', 42.2))
-        max_lat = float(request.args.get('max_lat', 42.4))
-        min_lon = float(request.args.get('min_lon', -83.2))
-        max_lon = float(request.args.get('max_lon', -82.9))
+        b = _current_region_cfg.bounds
+        min_lat = float(request.args.get('min_lat', b['min_lat']))
+        max_lat = float(request.args.get('max_lat', b['max_lat']))
+        min_lon = float(request.args.get('min_lon', b['min_lon']))
+        max_lon = float(request.args.get('max_lon', b['max_lon']))
+        zoom    = int(request.args.get('zoom', 13))
 
-        df = _get_baseline_with_coords()
+        target_res = _zoom_to_h3_res(zoom)
+        hex_df = _baseline_hexes.get(target_res)
+        if hex_df is None or hex_df.empty:
+            return jsonify({'hexes': [], 'res': target_res})
 
-        # Filter to viewport
         mask = (
-            (df['lat'] >= min_lat) & (df['lat'] <= max_lat) &
-            (df['lon'] >= min_lon) & (df['lon'] <= max_lon)
+            (hex_df['lat'] >= min_lat) & (hex_df['lat'] <= max_lat) &
+            (hex_df['lon'] >= min_lon) & (hex_df['lon'] <= max_lon)
         )
-        viewport_df = df[mask]
-
-        # Return as compact [lat, lon, rsrp] array
-        points = viewport_df[['lat', 'lon', 'predicted_rsrp']].round({'predicted_rsrp': 1}).values.tolist()
-        print(f"  Baseline viewport: {len(points):,} bins returned")
-        return jsonify({'points': points})
+        hexes = hex_df[mask][['h3_index', 'predicted_rsrp']].values.tolist()
+        print(f"  Baseline viewport: {len(hexes):,} hexes at res {target_res}")
+        return jsonify({'hexes': hexes, 'res': target_res})
 
     except Exception as e:
         print(f"Error in baseline_coverage: {e}")
@@ -193,14 +263,13 @@ def _get_site_sectors():
     global _site_sectors_cache
     if _site_sectors_cache is not None:
         return _site_sectors_cache
-    import json
     geojson_path = Path(__file__).parent / 'data' / 'windsor_sectors.geojson'
     if not geojson_path.exists():
         _site_sectors_cache = {'type': 'FeatureCollection', 'features': []}
         return _site_sectors_cache
     with open(geojson_path) as f:
         _site_sectors_cache = json.load(f)
-    print(f'  ✓ Site sectors loaded: {len(_site_sectors_cache["features"])} sector polygons')
+    print(f'  OK Site sectors loaded: {len(_site_sectors_cache["features"])} sector polygons')
     return _site_sectors_cache
 
 
@@ -216,38 +285,47 @@ def site_sectors():
 
 _ised_sites_cache = None
 
-def _get_ised_sites():
-    """Load and deduplicate ISED Windsor sites from GCS CSV (cached)."""
+def _get_ised_sites(region_name=None):
+    """Load and deduplicate ISED sites from local/GCS CSV (cached per region)."""
     global _ised_sites_cache
+    if region_name is None:
+        region_name = _current_region_cfg.name
     if _ised_sites_cache is not None:
         return _ised_sites_cache
 
     import os
     tmp_path = Path('/tmp/ISED_Overview_Table.csv')
 
-    # Download from GCS if running on Cloud Run
+    # Try local file first, then GCS
     if not tmp_path.exists():
-        bucket_name = os.environ.get('GCS_BUCKET', 'windsor-rf-ml-data')
-        try:
-            from google.cloud import storage as gcs
-            client = gcs.Client()
-            blob = client.bucket(bucket_name).blob('ISED Overview_Table.csv')
-            blob.download_to_filename(str(tmp_path))
-            print(f"  ✓ Downloaded ISED_Overview_Table.csv from GCS bucket {bucket_name}")
-        except Exception as e:
-            print(f"  ✗ GCS download failed for ISED CSV: {e}")
-            _ised_sites_cache = []
-            return _ised_sites_cache
+        local_ised = Path(__file__).parent.parent / 'ISED Overview_Table.csv'
+        if local_ised.exists():
+            tmp_path = local_ised
+            print(f"  OK Using local ISED CSV: {local_ised.name}")
+        else:
+            bucket_name = os.environ.get('GCS_BUCKET', 'windsor-rf-ml-data')
+            try:
+                from google.cloud import storage as gcs
+                client = gcs.Client()
+                blob = client.bucket(bucket_name).blob('ISED Overview_Table.csv')
+                blob.download_to_filename(str(tmp_path))
+                print(f"  OK Downloaded ISED_Overview_Table.csv from GCS bucket {bucket_name}")
+            except Exception as e:
+                print(f"  WARN GCS download failed for ISED CSV: {e}")
+                _ised_sites_cache = []
+                return _ised_sites_cache
 
     df = pd.read_csv(tmp_path, low_memory=False)
 
     # Filter to Windsor by coordinates
     df = df.dropna(subset=['latitude', 'longitude'])
+    region_cfg = REGIONS.get(region_name, _current_region_cfg)
+    b = region_cfg.bounds
     df = df[
-        (df['latitude'].between(42.18, 42.42)) &
-        (df['longitude'].between(-83.15, -82.88))
+        (df['latitude'].between(b['min_lat'], b['max_lat'])) &
+        (df['longitude'].between(b['min_lon'], b['max_lon']))
     ].copy()
-    print(f"  ISED Windsor rows: {len(df):,}")
+    print(f"  ISED {region_cfg.display_name} rows: {len(df):,}")
 
     # Round to 4 decimal places (~11m) to deduplicate co-located sectors
     df['lat_r'] = df['latitude'].round(4)
@@ -257,7 +335,11 @@ def _get_ised_sites():
     for (lat_r, lon_r), group in df.groupby(['lat_r', 'lon_r']):
         def uniq(col):
             return sorted({str(v) for v in group[col].dropna() if str(v).strip()})
-        max_h = group['max_ant_height'].max()
+        max_h = None
+        if 'max_ant_height' in group.columns:
+            vals = group['max_ant_height'].dropna()
+            if not vals.empty:
+                max_h = float(vals.max())
         sites.append({
             'lat': float(lat_r),
             'lon': float(lon_r),
@@ -265,19 +347,20 @@ def _get_ised_sites():
             'technologies': uniq('technology'),
             'bands': uniq('licence_category'),
             'sectors': int(len(group)),
-            'max_ant_height': int(max_h) if pd.notna(max_h) else None,
+            'max_ant_height': max_h,
         })
 
-    print(f"  ✓ ISED sites deduplicated: {len(sites)} unique tower locations")
+    print(f"  OK ISED sites deduplicated: {len(sites)} unique tower locations")
     _ised_sites_cache = sites
     return _ised_sites_cache
 
 
 @app.route('/api/ised_sites', methods=['GET'])
 def ised_sites():
-    """Return deduplicated ISED colocation sites for Windsor."""
+    """Return deduplicated ISED colocation sites for the current region."""
     try:
-        sites = _get_ised_sites()
+        region_name = request.args.get('region', _current_region_cfg.name)
+        sites = _get_ised_sites(region_name)
         return jsonify({'sites': sites})
     except Exception as e:
         print(f"Error in ised_sites: {e}")
@@ -287,39 +370,52 @@ def ised_sites():
 @app.route('/api/sites', methods=['GET'])
 def get_sites():
     """
-    Return all existing site locations merged from:
-      - dataset.csv          (original ~30 training sites)
-      - Cline/missing_sites_dataset.csv  (16 additional sites)
+    Return all existing site locations. Region-aware:
+      - Windsor:  dataset.csv + Cline/missing_sites_dataset.csv
+      - Montreal: mtl_cells_1900_2100.csv
+    Accepts optional ?region= query param; falls back to _current_region_cfg.
     """
-    if not hasattr(get_sites, '_cached'):
+    region_name = request.args.get('region', _current_region_cfg.name)
+    cache_key = f'_cached_{region_name}'
+    if not hasattr(get_sites, cache_key) or getattr(get_sites, cache_key) is None:
         import pandas as pd
         base = Path(__file__).parent.parent
-        cols = ['SiteID', 'antenna_lat', 'antenna_long']
 
-        # Primary dataset — prefer /tmp/ (GCS download) on Cloud Run
-        dataset_csv = Path('/tmp/dataset.csv')
-        if not dataset_csv.exists():
-            dataset_csv = base / 'dataset.csv'
-        df1 = pd.read_csv(dataset_csv, usecols=cols)
+        if region_name == 'montreal':
+            mtl_csv = Path('/tmp/mtl_cells_1900_2100.csv')
+            if not mtl_csv.exists():
+                mtl_csv = Path(__file__).parent.parent.parent.parent / 'Montreal Full' / 'mtl_cells_1900_2100.csv'
+            df = pd.read_csv(mtl_csv, usecols=['Latitude', 'Longitude', 'Site'], encoding='latin-1')
+            df = df.dropna(subset=['Latitude', 'Longitude']).drop_duplicates(subset=['Site'])
+            sites = [
+                {'site_id': str(r['Site']), 'lat': round(float(r['Latitude']), 5), 'lon': round(float(r['Longitude']), 5)}
+                for _, r in df.iterrows()
+            ]
+            print(f"  OK Sites loaded: {len(sites)} unique Montreal sites")
+        else:
+            cols = ['SiteID', 'antenna_lat', 'antenna_long']
 
-        # Additional 16 sites — prefer /tmp/ (GCS download) on Cloud Run
-        missing_csv = Path('/tmp/missing_sites_dataset.csv')
-        if not missing_csv.exists():
-            missing_csv = base / 'Cline' / 'missing_sites_dataset.csv'
-        df2 = pd.read_csv(missing_csv, usecols=cols)
+            dataset_csv = Path('/tmp/dataset.csv')
+            if not dataset_csv.exists():
+                dataset_csv = base / 'dataset.csv'
+            df1 = pd.read_csv(dataset_csv, usecols=cols)
 
-        # Merge, deduplicate by SiteID
-        df = pd.concat([df1, df2], ignore_index=True)
-        df = df.dropna(subset=['antenna_lat', 'antenna_long'])
-        df = df.drop_duplicates(subset=['SiteID'])
+            missing_csv = Path('/tmp/missing_sites_dataset.csv')
+            if not missing_csv.exists():
+                missing_csv = base / 'Cline' / 'missing_sites_dataset.csv'
+            df2 = pd.read_csv(missing_csv, usecols=cols)
 
-        sites = [
-            {'site_id': row['SiteID'], 'lat': round(row['antenna_lat'], 5), 'lon': round(row['antenna_long'], 5)}
-            for _, row in df.iterrows()
-        ]
-        get_sites._cached = sites
-        print(f"  ✓ Sites loaded: {len(sites)} unique sites (merged from dataset.csv + missing_sites_dataset.csv)")
-    return jsonify({'sites': get_sites._cached})
+            df = pd.concat([df1, df2], ignore_index=True)
+            df = df.dropna(subset=['antenna_lat', 'antenna_long'])
+            df = df.drop_duplicates(subset=['SiteID'])
+            sites = [
+                {'site_id': row['SiteID'], 'lat': round(row['antenna_lat'], 5), 'lon': round(row['antenna_long'], 5)}
+                for _, row in df.iterrows()
+            ]
+            print(f"  OK Sites loaded: {len(sites)} unique sites (merged from dataset.csv + missing_sites_dataset.csv)")
+
+        setattr(get_sites, cache_key, sites)
+    return jsonify({'sites': getattr(get_sites, cache_key)})
 
 
 @app.route('/api/search_candidates', methods=['POST'])
@@ -401,7 +497,7 @@ def search_candidates():
             height_df['_lat'] = [c[0] for c in coords]
             height_df['_lon'] = [c[1] for c in coords]
             _clutter_height_index = height_df
-            print(f"  ✓ Building index built: {len(_clutter_height_index):,} bins")
+            print(f"  OK Building index built: {len(_clutter_height_index):,} bins")
         height_df = _clutter_height_index
         # Determine which column was used for scoring
         score_col = height_df['_score_col'].iloc[0] if '_score_col' in height_df.columns else 'clutter_mean_height'
@@ -528,8 +624,9 @@ def batch_predict():
                     'max_improvement': round(result['stats']['max_improvement'], 2),
                     'footprint_bins': result['stats']['site_footprint_bins'],
                     'total_bins': result['stats']['total_bins'],
-                    'geojson': result['geojson'],                    # improved bins (≥3dB)
-                    'footprint_geojson': result['footprint_geojson'],# all bins where new site wins
+                    'covered_bad_imsis': _covered_bad_imsis(result.get('footprint_geojson')),
+                    'geojson': result['geojson'],
+                    'footprint_geojson': result['footprint_geojson'],
                     'status': 'success'
                 }
             
@@ -577,7 +674,7 @@ def batch_predict():
         
         # Count successes
         successes = sum(1 for r in results if r['status'] == 'success')
-        print(f"\n✓ Batch complete: {successes}/{len(df)} successful\n")
+        print(f"\nOK Batch complete: {successes}/{len(df)} successful\n")
         
         return jsonify({
             'results': results,
@@ -608,28 +705,30 @@ def startup_status():
 _clutter_layer_index = None
 
 def _get_clutter_layer_index():
-    """Build and cache the building height index (median > 6m, Building_pct >= 75)."""
+    """Build and cache the building height index (median/mean > 6m, Building_pct >= 75)."""
     global _clutter_layer_index
     if _clutter_layer_index is not None:
         return _clutter_layer_index
 
     import h3 as h3lib
     env = _get_predictor().env_features
-    needed = {'clutter_median_height', 'clutter_p95_height'}
+    # Windsor has clutter_median_height; Montreal only has clutter_mean_height
+    median_col = 'clutter_median_height' if 'clutter_median_height' in env.columns else 'clutter_mean_height'
+    needed = {median_col, 'clutter_p95_height'}
     if not needed.issubset(env.columns):
         return None
 
-    mask = env['clutter_median_height'] > 6
+    mask = env[median_col] > 6
     if 'Building_pct' in env.columns:
         mask = mask & (env['Building_pct'] >= 75)
-    df = env[mask][['clutter_median_height', 'clutter_p95_height']].copy()
+    df = env[mask][[median_col, 'clutter_p95_height']].copy()
     coords = [h3lib.cell_to_latlng(idx) for idx in df.index]
     df['lat'] = [round(c[0], 5) for c in coords]
     df['lon'] = [round(c[1], 5) for c in coords]
-    df = df.rename(columns={'clutter_median_height': 'median', 'clutter_p95_height': 'p95'})
+    df = df.rename(columns={median_col: 'median', 'clutter_p95_height': 'p95'})
     df[['median', 'p95']] = df[['median', 'p95']].round(1)
     _clutter_layer_index = df
-    print(f"  ✓ Building height index built: {len(df):,} bins (median > 6m, Building_pct ≥ 75%)")
+    print(f"  OK Building height index built: {len(df):,} bins ({median_col} > 6m, Building_pct >= 75%)")
     return _clutter_layer_index
 
 
@@ -640,10 +739,11 @@ def clutter_heights():
     Used by the high-zoom clutter height map layer.
     """
     try:
-        min_lat = float(request.args.get('min_lat', 42.2))
-        max_lat = float(request.args.get('max_lat', 42.4))
-        min_lon = float(request.args.get('min_lon', -83.2))
-        max_lon = float(request.args.get('max_lon', -82.9))
+        b = _current_region_cfg.bounds
+        min_lat = float(request.args.get('min_lat', b['min_lat']))
+        max_lat = float(request.args.get('max_lat', b['max_lat']))
+        min_lon = float(request.args.get('min_lon', b['min_lon']))
+        max_lon = float(request.args.get('max_lon', b['max_lon']))
 
         df = _get_clutter_layer_index()
         if df is None:
@@ -690,16 +790,25 @@ def _quadbin_center(cell):
 _bad_bins_df   = None   # DataFrame: h3_index, lat, lon, bad_ce_ims
 _bad_bins_dict = None   # {h3_index: bad_ce_ims} for O(1) coverage lookup
 
-def _load_bad_bins():
+def _load_bad_bins(region_name=None):
     global _bad_bins_df, _bad_bins_dict
     if _bad_bins_df is not None:
         return
 
     import os
+    if region_name is None:
+        region_name = _current_region_cfg.name
+
     bucket_name = os.environ.get('GCS_BUCKET', 'windsor-rf-ml-data')
-    blob_name   = os.environ.get('GCS_BAD_BINS_BLOB', 'weekly_bad_imsis')
-    tmp_path    = Path('/tmp/bad_bins_wnd.csv')
-    local_path  = Path(__file__).parent / 'data' / 'bad_bins_wnd.csv'
+
+    if region_name == 'montreal':
+        blob_name  = 'montreal/weekly_bad_imsi'
+        tmp_path   = Path('/tmp/bad_bins_mtl.csv')
+        local_path = None
+    else:
+        blob_name  = os.environ.get('GCS_BAD_BINS_BLOB', 'weekly_bad_imsis')
+        tmp_path   = Path('/tmp/bad_bins_wnd.csv')
+        local_path = Path(__file__).parent / 'data' / 'bad_bins_wnd.csv'
 
     # GCS-first: weekly BigQuery export overwrites this file
     if not tmp_path.exists():
@@ -712,8 +821,8 @@ def _load_bad_bins():
         except Exception as e:
             print(f"  WARN GCS download failed: {e} -- using local fallback")
 
-    source = tmp_path if tmp_path.exists() else local_path
-    if not source.exists():
+    source = tmp_path if tmp_path.exists() else (local_path if local_path else None)
+    if source is None or not source.exists():
         _bad_bins_df   = pd.DataFrame(columns=['h3_index', 'lat', 'lon', 'bad_ce_ims'])
         _bad_bins_dict = {}
         return
@@ -732,12 +841,11 @@ def _load_bad_bins():
     df['lon'] = df['lon'].round(5)
     _bad_bins_df   = df
     _bad_bins_dict = dict(zip(df['h3_index'], df['bad_ce_ims']))
-    print(f"  ✓ Bad IMSI bins loaded: {len(df):,} bins  "
+    print(f"  OK Bad IMSI bins loaded: {len(df):,} bins  "
           f"total={df['bad_ce_ims'].sum():,} IMSIs  "
           f"max={df['bad_ce_ims'].max():,}")
 
-# Load eagerly (small file, fast)
-threading.Thread(target=_load_bad_bins, daemon=True).start()
+# Bad bins are loaded per-region in _init_predictor_background()
 
 
 def _covered_bad_imsis(footprint_geojson):
@@ -760,10 +868,11 @@ def bad_imsi_bins():
         if _bad_bins_df is None or _bad_bins_df.empty:
             return jsonify({'points': []})
 
-        min_lat = float(request.args.get('min_lat', 42.2))
-        max_lat = float(request.args.get('max_lat', 42.4))
-        min_lon = float(request.args.get('min_lon', -83.2))
-        max_lon = float(request.args.get('max_lon', -82.9))
+        b = _current_region_cfg.bounds
+        min_lat = float(request.args.get('min_lat', b['min_lat']))
+        max_lat = float(request.args.get('max_lat', b['max_lat']))
+        min_lon = float(request.args.get('min_lon', b['min_lon']))
+        max_lon = float(request.args.get('max_lon', b['max_lon']))
 
         df = _bad_bins_df
         mask = (
@@ -783,7 +892,7 @@ def bad_imsi_bins():
 _poor_coverage_index = None
 
 def _get_poor_coverage_index():
-    """Build and cache the poor-coverage index (RSRP ≤ -109.5 dBm)."""
+    """Build and cache the poor-coverage index (RSRP <= -109.5 dBm)."""
     global _poor_coverage_index
     if _poor_coverage_index is not None:
         return _poor_coverage_index
@@ -794,20 +903,21 @@ def _get_poor_coverage_index():
     poor = poor.rename(columns={'predicted_rsrp': 'rsrp'})
     poor['rsrp'] = poor['rsrp'].round(1)
     _poor_coverage_index = poor
-    print(f"  ✓ Poor coverage index built: {len(poor):,} bins (≤ -109.5 dBm)")
+    print(f"  OK Poor coverage index built: {len(poor):,} bins (<= -109.5 dBm)")
     return _poor_coverage_index
 
 
 @app.route('/api/poor_coverage', methods=['GET'])
 def poor_coverage():
     """
-    Return baseline bins with RSRP ≤ -109.5 dBm (poor + very poor) for the viewport.
+    Return baseline bins with RSRP <= -109.5 dBm (poor + very poor) for the viewport.
     """
     try:
-        min_lat = float(request.args.get('min_lat', 42.2))
-        max_lat = float(request.args.get('max_lat', 42.4))
-        min_lon = float(request.args.get('min_lon', -83.2))
-        max_lon = float(request.args.get('max_lon', -82.9))
+        b = _current_region_cfg.bounds
+        min_lat = float(request.args.get('min_lat', b['min_lat']))
+        max_lat = float(request.args.get('max_lat', b['max_lat']))
+        min_lon = float(request.args.get('min_lon', b['min_lon']))
+        max_lon = float(request.args.get('max_lon', b['max_lon']))
 
         df = _get_poor_coverage_index()
         mask = (
@@ -880,7 +990,7 @@ def height_sweep():
 
         results = []
         for h in heights:
-            print(f"  Height sweep: {h}m at ({lat:.4f},{lon:.4f}), EDT={edt}°")
+            print(f"  Height sweep: {h}m at ({lat:.4f},{lon:.4f}), EDT={edt} deg")
             result = _get_predictor().predict_site_deployment(
                 site_lat=lat,
                 site_lon=lon,
@@ -959,4 +1069,4 @@ def save_png():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, use_reloader=False, host='0.0.0.0', port=5000)

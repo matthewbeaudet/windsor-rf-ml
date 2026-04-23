@@ -15,10 +15,15 @@ logger = logging.getLogger(__name__)
 
 class FeatureEngine:
     """Calculates features for RF propagation prediction"""
-    
-    def __init__(self):
-        """Initialize feature calculator"""
+
+    def __init__(self, terrain_elevation_fallback: float = 183.0):
+        """
+        Args:
+            terrain_elevation_fallback: Default UE terrain elevation (m ASL) when the
+                H3 bin has no DEM data. Windsor ~183 m; Montreal ~50 m.
+        """
         self.feature_names = []
+        self.terrain_elevation_fallback = terrain_elevation_fallback
     
     @staticmethod
     def calculate_distance_3d(lat1: float, lon1: float, height1: float,
@@ -163,14 +168,11 @@ class FeatureEngine:
         features['azimuth_sin'] = np.sin(np.radians(azimuth))
         features['azimuth_cos'] = np.cos(np.radians(azimuth))
         
-        # elevation_ue in training data = UE terrain elevation in METRES ASL.
-        # Source: terrain_mean from h3_complete_features_windsor.csv (DEM).
-        # UE is 1.5m above the ground surface.
-        # Fallback: 183.0 m ASL (Windsor is flat ~180-190m ASL).
-        WINDSOR_DEFAULT_ELEVATION_ASL = 183.0
-        terrain_asl = float(env_features.get('terrain_mean', WINDSOR_DEFAULT_ELEVATION_ASL)) \
-                      if env_features else WINDSOR_DEFAULT_ELEVATION_ASL
-        features['elevation_ue'] = terrain_asl + 1.5   # UE height above ground
+        # elevation_ue: UE terrain elevation (m ASL) + 1.5 m standing height.
+        # Prefer terrain_mean from H3 features database; fall back to region default.
+        terrain_asl = float(env_features.get('terrain_mean', self.terrain_elevation_fallback)) \
+                      if env_features else self.terrain_elevation_fallback
+        features['elevation_ue'] = terrain_asl + 1.5
 
         # elevation_diff_log: log10 of |antenna_height_agl - ue_height_agl|
         elevation_diff = antenna_height - ue_height
@@ -190,10 +192,8 @@ class FeatureEngine:
         theta_down = float(np.degrees(np.arctan2(height_diff_agl, max(horiz_dist_m, 1.0))))
         
         # Antenna parameters — NOTE: model feature names use spaces, not underscores
-        # RS dBm in training data = 18.2 dBm (RS EPRE — constant across all Windsor sites).
-        # This is hardcoded because the model was trained on this value; using any other
-        # value (e.g. total RS power = 43 dBm) would push the model out of distribution.
-        features['RS dBm']       = 18.2
+        # RS dBm = RS EPRE passed in by the caller (Windsor: 18.2 dBm; Montreal: 16.57 dBm mean).
+        features['RS dBm']       = rs_power
         features['Antenna height'] = float(antenna_height) if antenna_height is not None else 45.0
         features['Antenna EDT']  = float(edt) if edt is not None else 2.0
         features['Antenna MDT']  = float(mdt) if mdt is not None else 0.0
@@ -356,7 +356,8 @@ class FeatureEngine:
     @staticmethod
     def compute_dsm_los(ant_lat: float, ant_lon: float, ant_height: float,
                         ue_lat: float, ue_lon: float, dist_m: float,
-                        dsm_lookup: dict, n_samples: int = 20) -> dict:
+                        dsm_lookup: dict, n_samples: int = 20,
+                        terrain_fallback: float = 183.0) -> dict:
         """
         Ray-trace from antenna to UE using real DEM + DSM surface heights (all ASL).
         Vectorized implementation: all sample points computed with NumPy, no Python loop
@@ -391,7 +392,7 @@ class FeatureEngine:
         if not dsm_lookup or dist_m <= 0:
             return _clear
 
-        FALLBACK_TERRAIN = 183.0   # Windsor default terrain ASL if bin missing
+        FALLBACK_TERRAIN = terrain_fallback
         UE_HEIGHT_AGL    = 1.5     # UE sits 1.5m above the surface
 
         def _get(cell, key):
@@ -580,7 +581,8 @@ class FeatureEngine:
                 dsm_cache[h3_idx] = self.compute_dsm_los(
                     antenna_lat, antenna_lon, antenna_height,
                     ue_lat, ue_lon, dist_m,
-                    dsm_lookup, n_samples=20
+                    dsm_lookup, n_samples=20,
+                    terrain_fallback=self.terrain_elevation_fallback,
                 )
             # Write DSM LoS features to all rows (same value per bin across sectors)
             for col in ['dsm_los_ratio', 'dsm_los_binary', 'dsm_first_block_m', 'dsm_max_excess_m']:
