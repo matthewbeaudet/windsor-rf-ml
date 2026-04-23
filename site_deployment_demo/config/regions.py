@@ -14,9 +14,12 @@ _MTL  = _REPO.parent.parent / 'Montreal Full'   # G:/My Drive/Montreal Full
 
 
 def _mtl(filename: str) -> Path:
-    """Prefer /tmp/<filename> (Cloud Run GCS download) over local Montreal Full path."""
-    tmp = Path('/tmp') / filename
-    return tmp if tmp.exists() else _MTL / filename
+    """On Cloud Run (GCS_BUCKET set): use /tmp/ (files downloaded at init time).
+    Locally: use local Montreal Full path."""
+    import os
+    if os.environ.get('GCS_BUCKET'):
+        return Path('/tmp') / filename
+    return _MTL / filename
 
 
 @dataclass
