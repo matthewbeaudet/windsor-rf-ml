@@ -304,6 +304,21 @@
     </div>
 
     <div id="map"></div>
+    <div id="hex-status" style="
+        display: none;
+        position: fixed;
+        bottom: 24px;
+        left: 10px;
+        z-index: 1000;
+        background: rgba(255,255,255,0.85);
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-family: monospace;
+        color: #444;
+        pointer-events: none;
+    "></div>
     
     <div id="info-panel">
         <h2>Site Deployment Tool</h2>
@@ -312,8 +327,17 @@
             <strong>Click anywhere</strong> on the map to test a potential site location.
             The tool will show bins improved by <strong>≥3dB</strong>.
         </div>
-        <div data-band-label style="font-size:12px; color:#555; background:#eaf4ff; border:1px solid #b3d4f5; border-radius:5px; padding:6px 10px; margin-bottom:4px;">
-            📡 Band: <strong>2100 MHz</strong> (LTE B4) &nbsp;·&nbsp; Windsor, ON
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+            <div data-band-label style="flex:1; font-size:12px; color:#555; background:#eaf4ff; border:1px solid #b3d4f5; border-radius:5px; padding:6px 10px;">
+                📡 Band: <strong>2100 MHz</strong> (LTE B4) &nbsp;·&nbsp; Windsor, ON
+            </div>
+            <button onclick="switchRegion()" title="Switch region"
+                style="padding:5px 10px; font-size:11px; background:#fff; border:1px solid #b3d4f5; border-radius:5px; color:#555; cursor:pointer; white-space:nowrap;">
+                ⇄ Switch Region
+            </button>
+        </div>
+        <div id="region-island-note" style="display:none; font-size:11px; color:#7a5800; background:#fff8e1; border:1px solid #ffe082; border-radius:4px; padding:5px 8px; margin-bottom:4px;">
+            ⚠ Model coverage: <strong>Island of Montréal only</strong>. Laval and off-island suburbs are not yet supported.
         </div>
 
         <!-- Mode toggle buttons -->
@@ -529,7 +553,7 @@
             </label>
             <label style="margin-top:6px;">
                 <input type="checkbox" id="baseline-toggle">
-                Show Current Coverage (46 sites)
+                Show Current Coverage
             </label>
             <div id="baseline-loading" style="display:none; font-size:12px; color:#888; margin-top:5px;">
                 Loading baseline coverage...
@@ -696,6 +720,7 @@
     <!-- Leaflet.draw -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/h3-js@4/dist/h3-js.umd.js"></script>
     
     <script>
         // ── Region configs (mirrors server-side RegionConfig) ────────────────
@@ -708,14 +733,19 @@
         let _selectedRegion = null;
 
         // ── Region selection ──────────────────────────────────────────────────
+        function switchRegion() {
+            localStorage.removeItem('rf_region');
+            location.reload();
+        }
+
         function selectRegion(region) {
             _selectedRegion = region;
+            localStorage.setItem('rf_region', region);
             const cfg = REGION_CONFIGS[region];
 
             // Fade out region selector
             const sel = document.getElementById('region-select-screen');
-            sel.classList.add('fade-out');
-            setTimeout(() => sel.remove(), 450);
+            if (sel) { sel.classList.add('fade-out'); setTimeout(() => sel.remove(), 450); }
 
             // Update header and band label
             document.getElementById('terminal-header').textContent =
@@ -730,12 +760,15 @@
             const modelRow = document.getElementById('model-variant-row');
             const modelSel = document.getElementById('model-variant');
             const modelAuto = document.getElementById('model-auto-label');
+            const islandNote = document.getElementById('region-island-note');
             if (region === 'montreal') {
                 if (modelSel) modelSel.style.display = 'none';
                 if (modelAuto) modelAuto.style.display = '';
+                if (islandNote) islandNote.style.display = '';
             } else {
                 if (modelSel) modelSel.style.display = '';
                 if (modelAuto) modelAuto.style.display = 'none';
+                if (islandNote) islandNote.style.display = 'none';
             }
 
             // POST region to backend, then start polling
@@ -881,52 +914,48 @@
             const bounds = map.getBounds();
             const zoom = map.getZoom();
 
-            // Only show at zoom >= 12 to avoid overload
-            if (zoom < 12) {
-                if (baselineLayer) { map.removeLayer(baselineLayer); baselineLayer = null; }
-                document.getElementById('baseline-loading').textContent = 'Zoom in (≥12) to see coverage';
-                document.getElementById('baseline-loading').style.display = 'block';
-                return;
-            }
             document.getElementById('baseline-loading').textContent = 'Loading baseline coverage...';
             document.getElementById('baseline-loading').style.display = 'block';
 
             try {
-                const url = `/api/baseline_coverage?min_lat=${bounds.getSouth().toFixed(5)}&max_lat=${bounds.getNorth().toFixed(5)}&min_lon=${bounds.getWest().toFixed(5)}&max_lon=${bounds.getEast().toFixed(5)}`;
+                const url = `/api/baseline_coverage?min_lat=${bounds.getSouth().toFixed(5)}&max_lat=${bounds.getNorth().toFixed(5)}&min_lon=${bounds.getWest().toFixed(5)}&max_lon=${bounds.getEast().toFixed(5)}&zoom=${zoom}`;
                 const resp = await fetch(url);
                 const data = await resp.json();
 
-                // Remove old layer
                 if (baselineLayer) { map.removeLayer(baselineLayer); baselineLayer = null; }
 
-                // Build GeoJSON from compact [lat, lon, rsrp] array
-                const features = data.points.map(([lat, lon, rsrp]) => ({
-                    type: 'Feature',
-                    geometry: { type: 'Point', coordinates: [lon, lat] },
-                    properties: { rsrp }
-                }));
+                // Build hexagon polygons from H3 indices
+                const features = data.hexes.map(([h3Index, rsrp]) => {
+                    const boundary = h3.cellToBoundary(h3Index);
+                    const coords   = boundary.map(([lat, lng]) => [lng, lat]);
+                    coords.push(coords[0]);
+                    return {
+                        type: 'Feature',
+                        geometry: { type: 'Polygon', coordinates: [coords] },
+                        properties: { rsrp }
+                    };
+                });
 
-                // Use canvas renderer for performance
-                const renderer = L.canvas({ padding: 0.5 });
                 baselineLayer = L.geoJSON({ type: 'FeatureCollection', features }, {
-                    pointToLayer: function(feature, latlng) {
-                        return L.circleMarker(latlng, {
-                            renderer,
-                            radius: zoom >= 15 ? 6 : zoom >= 14 ? 5 : zoom >= 13 ? 4 : 3,
-                            fillColor: rsrpToHex(feature.properties.rsrp),
-                            fillOpacity: 0.75,
-                            color: 'none',
-                            weight: 0
-                        });
+                    style: function(feature) {
+                        return {
+                            fillColor:   rsrpToHex(feature.properties.rsrp),
+                            fillOpacity: 0.55,
+                            color:       'none',
+                            weight:      0
+                        };
                     },
                     onEachFeature: function(feature, layer) {
-                        layer.bindPopup(`<strong>Baseline RSRP</strong><br>${feature.properties.rsrp} dBm`);
+                        layer.bindPopup(`<strong>Baseline RSRP</strong><br>${feature.properties.rsrp.toFixed(1)} dBm`);
                     }
                 }).addTo(map);
                 baselineLayer.bringToBack();
 
                 document.getElementById('baseline-loading').style.display = 'none';
-                console.log(`Baseline: ${data.points.length} bins in viewport`);
+                const hexStatus = document.getElementById('hex-status');
+                hexStatus.style.display = 'block';
+                hexStatus.textContent = `zoom ${zoom} · H3 res ${data.res}`;
+                console.log(`Baseline: ${data.hexes.length} hexes in viewport`);
             } catch (err) {
                 console.error('Baseline load failed:', err);
                 document.getElementById('baseline-loading').style.display = 'none';
@@ -947,6 +976,7 @@
             } else {
                 if (baselineLayer) { map.removeLayer(baselineLayer); baselineLayer = null; }
                 document.getElementById('baseline-loading').style.display = 'none';
+                document.getElementById('hex-status').style.display = 'none';
             }
         });
 
@@ -1008,7 +1038,7 @@
             }
         });
 
-        // ─── Clutter Height Layer (zoom ≥ 15, median > 6m) ───────────────────
+        // ─── Clutter Height Layer (zoom ≥ 15, label=P95, filter=median > 6m) ──
         let clutterLayer = null;
         let clutterVisible = false;
         let clutterRefreshTimer = null;
@@ -1044,7 +1074,7 @@
                         return L.marker(latlng, {
                             icon: L.divIcon({
                                 className: '',
-                                html: `<div style="display:inline-block;background:rgba(0,0,0,0.72);color:#fff;font-size:10px;font-family:monospace;font-weight:bold;padding:2px 4px;border-radius:2px;white-space:nowrap;line-height:1.4;pointer-events:none;">${p.median}m</div>`,
+                                html: `<div style="display:inline-block;background:rgba(0,0,0,0.72);color:#fff;font-size:10px;font-family:monospace;font-weight:bold;padding:2px 4px;border-radius:2px;white-space:nowrap;line-height:1.4;pointer-events:none;">${p.p95}m</div>`,
                                 iconSize: null,
                                 iconAnchor: null
                             })
@@ -1625,6 +1655,12 @@
         console.log('Site Deployment Tool initialized');
         console.log('Click anywhere on the map to test a site location');
 
+        // Auto-restore last region from localStorage so refresh skips the selector
+        const _savedRegion = localStorage.getItem('rf_region');
+        if (_savedRegion && REGION_CONFIGS[_savedRegion]) {
+            selectRegion(_savedRegion);
+        }
+
         // ═══════════════════════════════════════════════════════════════════
         // ─── SITE SELECTION TOOL ───────────────────────────────────────────
         // ═══════════════════════════════════════════════════════════════════
@@ -2164,7 +2200,7 @@ Southside_Auto,42.3022,-83.0286,auto`;
         document.getElementById('batch-export-btn').addEventListener('click', function() {
             if (!batchResults.length) return;
 
-            const headers = ['site_name', 'lat', 'lon', 'height', 'improved_bins', 'mean_improvement', 'max_improvement', 'footprint_bins', 'total_bins', 'status'];
+            const headers = ['site_name', 'lat', 'lon', 'height', 'improved_bins', 'mean_improvement', 'max_improvement', 'footprint_bins', 'total_bins', 'covered_bad_imsis', 'status'];
             const rows = batchResults.map(r => headers.map(h => {
                 const v = r[h];
                 return v !== undefined ? v : '';

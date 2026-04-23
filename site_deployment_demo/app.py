@@ -6,6 +6,7 @@ Interactive demo for testing site deployment locations
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 import sys
+import json
 import threading
 import pandas as pd
 from pathlib import Path
@@ -28,16 +29,22 @@ _current_region_cfg = WINDSOR   # set by /api/init before background thread star
 
 
 def _init_predictor_background(region_cfg):
-    global predictor, _startup_ready, _startup_error, _baseline_with_coords, _clutter_height_index, _clutter_layer_index
-    # Reset cached viewport indexes when region changes
+    global predictor, _startup_ready, _startup_error, _baseline_with_coords, _clutter_height_index, _clutter_layer_index, _baseline_hexes
     _baseline_with_coords = None
     _clutter_height_index = None
     _clutter_layer_index  = None
+    _baseline_hexes       = {}
     try:
         _startup_log.append(f'> Initializing {region_cfg.display_name} RF ML Tool...')
         _startup_log.append('> Loading ML models and environmental data...')
+        from rf_design_tool.modules.data_loader import download_region_files
+        download_region_files(region_cfg.name)
+        _load_bad_bins(region_cfg.name)
         predictor = SitePredictor(region_config=region_cfg)
         _startup_log.append('> Baseline network loaded.')
+        _startup_log.append('> Pre-computing coverage layers...')
+        _get_baseline_with_coords()
+        _build_baseline_hexes()
         _startup_log.append('> System ready.')
         _startup_ready = True
     except Exception as e:
@@ -51,7 +58,7 @@ def init_region():
     Select region and start background initialization.
     Must be called before /api/status is polled.
     """
-    global _current_region_cfg, _startup_log, _startup_ready, _startup_error, predictor, _ised_sites_cache
+    global _current_region_cfg, _startup_log, _startup_ready, _startup_error, predictor, _ised_sites_cache, _bad_bins_df, _bad_bins_dict
     region_name = (request.json or {}).get('region', 'windsor')
     cfg = REGIONS.get(region_name, WINDSOR)
     _current_region_cfg = cfg
@@ -62,6 +69,8 @@ def init_region():
     _startup_error    = None
     _ised_sites_cache = None   # force reload with correct region bounds
     get_sites._cached = None   # force reload with correct region sites
+    _bad_bins_df      = None   # force reload for new region
+    _bad_bins_dict    = None
     threading.Thread(
         target=_init_predictor_background, args=(cfg,), daemon=True
     ).start()
@@ -160,6 +169,7 @@ def predict_site():
 
 # Pre-build baseline lookup with lat/lon at startup for fast viewport queries
 _baseline_with_coords = None
+_baseline_hexes       = {}   # {res: DataFrame(h3_index, predicted_rsrp, lat, lon)}
 # Cached clutter-height index (lat/lon for all bins with clutter_height > 0)
 _clutter_height_index = None
 
@@ -186,36 +196,90 @@ def _get_baseline_with_coords():
     return _baseline_with_coords
 
 
+def _build_baseline_hexes():
+    global _baseline_hexes
+    import h3 as h3lib
+    df = _get_baseline_with_coords()
+    if df is None or df.empty:
+        return
+    _baseline_hexes = {}
+    for res in (5, 6, 7, 8, 9, 10, 11, 12):
+        tmp = df.copy()
+        tmp['display_hex'] = tmp['h3_index'].apply(
+            lambda x: h3lib.cell_to_parent(x, res) if h3lib.get_resolution(x) > res else x
+        )
+        agg = tmp.groupby('display_hex')['predicted_rsrp'].mean().round(1).reset_index()
+        agg.columns = ['h3_index', 'predicted_rsrp']
+        centers = [h3lib.cell_to_latlng(h) for h in agg['h3_index']]
+        agg['lat'] = [c[0] for c in centers]
+        agg['lon'] = [c[1] for c in centers]
+        _baseline_hexes[res] = agg
+    print(f"  OK Hex layers: {', '.join(f'res{r}={len(_baseline_hexes[r]):,}' for r in sorted(_baseline_hexes))}")
+
+
+def _zoom_to_h3_res(zoom):
+    if zoom >= 16: return 12
+    if zoom >= 14: return 11
+    if zoom >= 12: return 10
+    if zoom >= 10: return 9
+    if zoom >= 8:  return 8
+    if zoom >= 6:  return 7
+    if zoom >= 4:  return 6
+    return 5
+
+
 @app.route('/api/baseline_coverage', methods=['GET'])
 def baseline_coverage():
-    """
-    Return baseline coverage for the current map viewport.
-    Accepts bounding box params: min_lat, max_lat, min_lon, max_lon
-    Only returns bins within the viewport for performance.
-    """
     try:
         b = _current_region_cfg.bounds
         min_lat = float(request.args.get('min_lat', b['min_lat']))
         max_lat = float(request.args.get('max_lat', b['max_lat']))
         min_lon = float(request.args.get('min_lon', b['min_lon']))
         max_lon = float(request.args.get('max_lon', b['max_lon']))
+        zoom    = int(request.args.get('zoom', 13))
 
-        df = _get_baseline_with_coords()
+        target_res = _zoom_to_h3_res(zoom)
+        hex_df = _baseline_hexes.get(target_res)
+        if hex_df is None or hex_df.empty:
+            return jsonify({'hexes': [], 'res': target_res})
 
-        # Filter to viewport
         mask = (
-            (df['lat'] >= min_lat) & (df['lat'] <= max_lat) &
-            (df['lon'] >= min_lon) & (df['lon'] <= max_lon)
+            (hex_df['lat'] >= min_lat) & (hex_df['lat'] <= max_lat) &
+            (hex_df['lon'] >= min_lon) & (hex_df['lon'] <= max_lon)
         )
-        viewport_df = df[mask]
-
-        # Return as compact [lat, lon, rsrp] array
-        points = viewport_df[['lat', 'lon', 'predicted_rsrp']].round({'predicted_rsrp': 1}).values.tolist()
-        print(f"  Baseline viewport: {len(points):,} bins returned")
-        return jsonify({'points': points})
+        hexes = hex_df[mask][['h3_index', 'predicted_rsrp']].values.tolist()
+        print(f"  Baseline viewport: {len(hexes):,} hexes at res {target_res}")
+        return jsonify({'hexes': hexes, 'res': target_res})
 
     except Exception as e:
         print(f"Error in baseline_coverage: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+_site_sectors_cache = None
+
+def _get_site_sectors():
+    """Load Windsor antenna sector wedges from bundled GeoJSON (cached)."""
+    global _site_sectors_cache
+    if _site_sectors_cache is not None:
+        return _site_sectors_cache
+    geojson_path = Path(__file__).parent / 'data' / 'windsor_sectors.geojson'
+    if not geojson_path.exists():
+        _site_sectors_cache = {'type': 'FeatureCollection', 'features': []}
+        return _site_sectors_cache
+    with open(geojson_path) as f:
+        _site_sectors_cache = json.load(f)
+    print(f'  OK Site sectors loaded: {len(_site_sectors_cache["features"])} sector polygons')
+    return _site_sectors_cache
+
+
+@app.route('/api/site_sectors', methods=['GET'])
+def site_sectors():
+    """Return Windsor antenna sector wedge polygons as GeoJSON."""
+    try:
+        return jsonify(_get_site_sectors())
+    except Exception as e:
+        print(f'Error in site_sectors: {e}')
         return jsonify({'error': str(e)}), 500
 
 
@@ -318,7 +382,9 @@ def get_sites():
         base = Path(__file__).parent.parent
 
         if region_name == 'montreal':
-            mtl_csv = Path(REGIONS['montreal'].h3_features_path).parent.parent / 'mtl_cells_1900_2100.csv'
+            mtl_csv = Path('/tmp/mtl_cells_1900_2100.csv')
+            if not mtl_csv.exists():
+                mtl_csv = Path(__file__).parent.parent.parent.parent / 'Montreal Full' / 'mtl_cells_1900_2100.csv'
             df = pd.read_csv(mtl_csv, usecols=['Latitude', 'Longitude', 'Site'], encoding='latin-1')
             df = df.dropna(subset=['Latitude', 'Longitude']).drop_duplicates(subset=['Site'])
             sites = [
@@ -558,8 +624,9 @@ def batch_predict():
                     'max_improvement': round(result['stats']['max_improvement'], 2),
                     'footprint_bins': result['stats']['site_footprint_bins'],
                     'total_bins': result['stats']['total_bins'],
-                    'geojson': result['geojson'],                    # improved bins (>=3dB)
-                    'footprint_geojson': result['footprint_geojson'],# all bins where new site wins
+                    'covered_bad_imsis': _covered_bad_imsis(result.get('footprint_geojson')),
+                    'geojson': result['geojson'],
+                    'footprint_geojson': result['footprint_geojson'],
                     'status': 'success'
                 }
             
@@ -723,16 +790,25 @@ def _quadbin_center(cell):
 _bad_bins_df   = None   # DataFrame: h3_index, lat, lon, bad_ce_ims
 _bad_bins_dict = None   # {h3_index: bad_ce_ims} for O(1) coverage lookup
 
-def _load_bad_bins():
+def _load_bad_bins(region_name=None):
     global _bad_bins_df, _bad_bins_dict
     if _bad_bins_df is not None:
         return
 
     import os
+    if region_name is None:
+        region_name = _current_region_cfg.name
+
     bucket_name = os.environ.get('GCS_BUCKET', 'windsor-rf-ml-data')
-    blob_name   = os.environ.get('GCS_BAD_BINS_BLOB', 'weekly_bad_imsis')
-    tmp_path    = Path('/tmp/bad_bins_wnd.csv')
-    local_path  = Path(__file__).parent / 'data' / 'bad_bins_wnd.csv'
+
+    if region_name == 'montreal':
+        blob_name  = 'montreal/weekly_bad_imsi'
+        tmp_path   = Path('/tmp/bad_bins_mtl.csv')
+        local_path = None
+    else:
+        blob_name  = os.environ.get('GCS_BAD_BINS_BLOB', 'weekly_bad_imsis')
+        tmp_path   = Path('/tmp/bad_bins_wnd.csv')
+        local_path = Path(__file__).parent / 'data' / 'bad_bins_wnd.csv'
 
     # GCS-first: weekly BigQuery export overwrites this file
     if not tmp_path.exists():
@@ -745,8 +821,8 @@ def _load_bad_bins():
         except Exception as e:
             print(f"  WARN GCS download failed: {e} -- using local fallback")
 
-    source = tmp_path if tmp_path.exists() else local_path
-    if not source.exists():
+    source = tmp_path if tmp_path.exists() else (local_path if local_path else None)
+    if source is None or not source.exists():
         _bad_bins_df   = pd.DataFrame(columns=['h3_index', 'lat', 'lon', 'bad_ce_ims'])
         _bad_bins_dict = {}
         return
@@ -769,8 +845,7 @@ def _load_bad_bins():
           f"total={df['bad_ce_ims'].sum():,} IMSIs  "
           f"max={df['bad_ce_ims'].max():,}")
 
-# Load eagerly (small file, fast)
-threading.Thread(target=_load_bad_bins, daemon=True).start()
+# Bad bins are loaded per-region in _init_predictor_background()
 
 
 def _covered_bad_imsis(footprint_geojson):

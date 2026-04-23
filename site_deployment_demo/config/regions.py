@@ -13,6 +13,12 @@ _REPO = _HERE.parent.parent                      # Windsor Mode Server root
 _MTL  = _REPO.parent.parent / 'Montreal Full'   # G:/My Drive/Montreal Full
 
 
+def _mtl(filename: str) -> Path:
+    """Prefer /tmp/<filename> (Cloud Run GCS download) over local Montreal Full path."""
+    tmp = Path('/tmp') / filename
+    return tmp if tmp.exists() else _MTL / filename
+
+
 @dataclass
 class RegionConfig:
     name: str
@@ -71,17 +77,17 @@ MONTREAL = RegionConfig(
     terrain_elevation_m=50.0,
     default_rs_epre_dbm=16.57,
     default_edt_deg=4.4,
-    h3_features_path=_MTL / 'H3_Databases' / 'h3_complete_features_montreal.csv',
-    baseline_path=_MTL / 'Model' / 'montreal_baseline_rsrp.csv',
+    h3_features_path=_mtl('h3_complete_features_montreal.csv'),
+    baseline_path=_mtl('montreal_baseline_rsrp.csv'),
     baseline_rsrp_col='baseline_rsrp',
     bad_bins_path=None,
-    urban_model_path=_MTL / 'Model' / 'lgbm_montreal_53feat_urban_model.joblib',
-    suburban_model_path=_MTL / 'Model' / 'lgbm_montreal_53feat_suburban_model.joblib',
-    urban_features_path=_MTL / 'Model' / 'lgbm_montreal_53feat_urban_features.json',
-    suburban_features_path=_MTL / 'Model' / 'lgbm_montreal_53feat_suburban_features.json',
-    urban_poly_path=_MTL / 'urban_mtl.geojson',
-    dsm_path=_MTL / 'H3_Databases' / 'h3_dsm_database_montreal.csv',
-    dem_path=_MTL / 'H3_Databases' / 'h3_dem_database_montreal.csv',
+    urban_model_path=_mtl('lgbm_montreal_53feat_urban_model.joblib'),
+    suburban_model_path=_mtl('lgbm_montreal_53feat_suburban_model.joblib'),
+    urban_features_path=_mtl('lgbm_montreal_53feat_urban_features.json'),
+    suburban_features_path=_mtl('lgbm_montreal_53feat_suburban_features.json'),
+    urban_poly_path=_mtl('urban_mtl.geojson'),
+    dsm_path=_mtl('h3_dsm_database_montreal.csv'),
+    dem_path=_mtl('h3_dem_database_montreal.csv'),
 )
 
 REGIONS = {

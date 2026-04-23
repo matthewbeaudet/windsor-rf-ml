@@ -65,6 +65,46 @@ def _download_from_gcs():
 _download_from_gcs()
 
 
+_GCS_FILES_MONTREAL = {
+    "montreal/h3_complete_features_montreal.csv":         "/tmp/h3_complete_features_montreal.csv",
+    "montreal/h3_dsm_database_montreal.csv":              "/tmp/h3_dsm_database_montreal.csv",
+    "montreal/h3_dem_database_montreal.csv":              "/tmp/h3_dem_database_montreal.csv",
+    "montreal/montreal_baseline_rsrp.csv":                "/tmp/montreal_baseline_rsrp.csv",
+    "montreal/lgbm_montreal_53feat_urban_model.joblib":   "/tmp/lgbm_montreal_53feat_urban_model.joblib",
+    "montreal/lgbm_montreal_53feat_suburban_model.joblib":"/tmp/lgbm_montreal_53feat_suburban_model.joblib",
+    "montreal/lgbm_montreal_53feat_urban_features.json":  "/tmp/lgbm_montreal_53feat_urban_features.json",
+    "montreal/lgbm_montreal_53feat_suburban_features.json":"/tmp/lgbm_montreal_53feat_suburban_features.json",
+    "montreal/urban_mtl.geojson":                         "/tmp/urban_mtl.geojson",
+    "montreal/mtl_cells_1900_2100.csv":                   "/tmp/mtl_cells_1900_2100.csv",
+}
+
+
+def download_region_files(region_name: str):
+    """Download Montreal data files from GCS lazily (only when Montreal is selected).
+    No-op locally (GCS_BUCKET not set) and skips files already in /tmp/."""
+    if "GCS_BUCKET" not in os.environ:
+        return
+    if region_name != "montreal":
+        return
+    try:
+        from google.cloud import storage
+        client = storage.Client()
+        bucket = client.bucket(_GCS_BUCKET)
+        print(f"GCS: downloading Montreal data files from gs://{_GCS_BUCKET}/montreal/")
+        for gcs_name, local_path in _GCS_FILES_MONTREAL.items():
+            if Path(local_path).exists():
+                print(f"  ✓ Already present: {local_path}")
+                continue
+            blob = bucket.blob(gcs_name)
+            print(f"  ↓ {gcs_name}")
+            blob.download_to_filename(local_path)
+            print(f"  ✓ Done: {local_path}")
+        print("GCS: Montreal files ready.\n")
+    except Exception as e:
+        print(f"GCS Montreal download failed: {e}")
+        raise
+
+
 def _resolve_path(local_path: Path, tmp_name: str) -> Path:
     """
     Return /tmp/<tmp_name> if running on Cloud Run (file was downloaded from GCS),
