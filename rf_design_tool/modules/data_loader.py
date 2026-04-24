@@ -61,13 +61,16 @@ def download_region_files(region_name: str):
             if Path(local_path).exists():
                 print(f"  ✓ Already present: {local_path}")
                 continue
-            blob = bucket.blob(gcs_name)
-            print(f"  ↓ {gcs_name}")
-            blob.download_to_filename(local_path)
-            print(f"  ✓ Done: {local_path}")
+            try:
+                blob = bucket.blob(gcs_name)
+                print(f"  ↓ {gcs_name}")
+                blob.download_to_filename(local_path)
+                print(f"  ✓ Done: {local_path}")
+            except Exception as e:
+                print(f"  WARN: {gcs_name} not found in GCS: {e}")
         print(f"GCS: {label} files ready.\n")
     except Exception as e:
-        print(f"GCS {label} download failed: {e}")
+        print(f"GCS {label} connection failed: {e}")
         raise
 
 

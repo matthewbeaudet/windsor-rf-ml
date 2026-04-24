@@ -62,6 +62,7 @@ def _init_predictor_background(region_cfg):
         _get_baseline_with_coords()
         _startup_log.append('> System ready.')
         _startup_ready = True
+        threading.Thread(target=_prewarm_hex_layers, daemon=True).start()
     except Exception as e:
         _startup_error = str(e)
         _startup_log.append(f'> ERROR: {e}')
@@ -226,7 +227,8 @@ def _get_baseline_with_coords():
 
 
 def _get_baseline_hex_layer(res):
-    """Return baseline hex layer at given resolution, computing and caching on first use."""
+    """Return baseline hex layer at given resolution, computing and caching on first use.
+    Uses dict aggregation + list comprehension to avoid slow .apply() on large DataFrames."""
     global _baseline_hexes
     if res in _baseline_hexes:
         return _baseline_hexes[res]
@@ -234,29 +236,54 @@ def _get_baseline_hex_layer(res):
     df = _get_baseline_with_coords()
     if df is None or df.empty:
         return None
-    unique = df['h3_index'].unique()
-    parent_map = {h: (h3lib.cell_to_parent(h, res) if h3lib.get_resolution(h) > res else h)
-                  for h in unique}
-    tmp = df.copy()
-    tmp['display_hex'] = tmp['h3_index'].map(parent_map)
-    agg = tmp.groupby('display_hex')['predicted_rsrp'].mean().round(1).reset_index()
-    agg.columns = ['h3_index', 'predicted_rsrp']
-    centers = [h3lib.cell_to_latlng(h) for h in agg['h3_index']]
-    agg['lat'] = [c[0] for c in centers]
-    agg['lon'] = [c[1] for c in centers]
+
+    h3_vals   = df['h3_index'].values
+    rsrp_vals = df['predicted_rsrp'].values
+    native_res = h3lib.get_resolution(h3_vals[0])
+
+    # Map each bin to its display hex at target resolution
+    if native_res > res:
+        display = [h3lib.cell_to_parent(h, res) for h in h3_vals]
+    else:
+        display = h3_vals.tolist()
+
+    # Aggregate mean RSRP per display hex using plain dicts (faster than groupby)
+    total, count = {}, {}
+    for h, r in zip(display, rsrp_vals):
+        if h in total:
+            total[h] += r
+            count[h] += 1
+        else:
+            total[h] = r
+            count[h] = 1
+
+    hex_list = list(total.keys())
+    centers  = [h3lib.cell_to_latlng(h) for h in hex_list]
+    agg = pd.DataFrame({
+        'h3_index':      hex_list,
+        'predicted_rsrp': [round(total[h] / count[h], 1) for h in hex_list],
+        'lat':            [c[0] for c in centers],
+        'lon':            [c[1] for c in centers],
+    })
     _baseline_hexes[res] = agg
+    print(f"  Hex layer res{res}: {len(agg):,} bins computed")
     return agg
 
 
 def _zoom_to_h3_res(zoom):
-    if zoom >= 16: return 12
-    if zoom >= 14: return 11
-    if zoom >= 12: return 10
-    if zoom >= 10: return 9
-    if zoom >= 8:  return 8
-    if zoom >= 6:  return 7
-    if zoom >= 4:  return 6
-    return 5
+    if zoom >= 16: return 12   # Street level only
+    if zoom >= 14: return 10   # Neighbourhood
+    if zoom >= 12: return 9    # District
+    return 8                    # City / default view
+
+
+def _prewarm_hex_layers():
+    """Pre-compute and cache hex layers for all 4 zoom levels after startup."""
+    for res in (8, 9, 10, 12):
+        try:
+            _get_baseline_hex_layer(res)
+        except Exception as e:
+            print(f"  WARN pre-warm res{res}: {e}")
 
 
 @app.route('/api/baseline_coverage', methods=['GET'])
