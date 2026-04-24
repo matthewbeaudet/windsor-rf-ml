@@ -13,6 +13,15 @@ _REPO = _HERE.parent.parent                      # Windsor Mode Server root
 _MTL  = _REPO.parent.parent / 'Montreal Full'   # G:/My Drive/Montreal Full
 
 
+def _wnd(filename: str) -> Path:
+    """On Cloud Run: use /tmp/ (downloaded by _download_from_gcs at startup).
+    Locally: use repo root path."""
+    import os
+    if os.environ.get('GCS_BUCKET'):
+        return Path('/tmp') / filename
+    return _REPO / filename
+
+
 def _mtl(filename: str) -> Path:
     """On Cloud Run (GCS_BUCKET set): use /tmp/ (files downloaded at init time).
     Locally: use local Montreal Full path."""
@@ -61,8 +70,8 @@ WINDSOR = RegionConfig(
     terrain_elevation_m=183.0,
     default_rs_epre_dbm=18.2,
     default_edt_deg=6.0,
-    h3_features_path=_REPO / 'h3_complete_features_windsor.csv',
-    baseline_path=_REPO / 'comprehensive_rsrp_all_46_sites.csv',
+    h3_features_path=_wnd('h3_complete_features_windsor.csv'),
+    baseline_path=_wnd('comprehensive_rsrp_all_46_sites.csv'),
     baseline_rsrp_col='predicted_rsrp',
     bad_bins_path=_HERE.parent / 'data' / 'bad_bins_wnd.csv',
     model_path=_REPO / 'Model' / 'lean_lgbm_53feat_model.joblib',
