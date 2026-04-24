@@ -5,6 +5,7 @@ Interactive demo for testing site deployment locations
 
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
+import os
 import sys
 import json
 import logging
@@ -20,6 +21,10 @@ from config.regions import REGIONS, WINDSOR
 
 app = Flask(__name__)
 CORS(app)
+
+# If REGION env var is set, this service is locked to one region (per-city deployment).
+# The region auto-inits at startup; the region selector is hidden in the UI.
+_PRESET_REGION = os.environ.get('REGION', '').lower() or None
 
 # Suppress access-log noise from the 1-second /api/status polling
 class _SuppressStatusPolling(logging.Filter):
@@ -110,7 +115,7 @@ def _get_predictor():
 @app.route('/')
 def index():
     """Serve the interactive map interface"""
-    return render_template('index.html')
+    return render_template('index.html', preset_region=_PRESET_REGION)
 
 @app.route('/api/predict_site', methods=['POST'])
 def predict_site():
@@ -1091,6 +1096,14 @@ def save_png():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+# Auto-init when REGION env var is set (per-city Cloud Run deployment)
+if _PRESET_REGION and _PRESET_REGION in REGIONS:
+    _cfg = REGIONS[_PRESET_REGION]
+    _current_region_cfg = _cfg
+    _startup_loading    = True
+    threading.Thread(target=_init_predictor_background, args=(_cfg,), daemon=True).start()
 
 
 if __name__ == '__main__':

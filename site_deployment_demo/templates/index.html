@@ -285,6 +285,7 @@
 </head>
 <body>
     <!-- Region selector — shown first, fades out once region is picked -->
+    {% if not preset_region %}
     <div id="region-select-screen">
         <h1>RF ML TOOL &nbsp;//&nbsp; SELECT REGION</h1>
         <p>Choose a region to load models and coverage data</p>
@@ -293,6 +294,7 @@
             <button class="region-btn" onclick="selectRegion('montreal')">Montréal, QC</button>
         </div>
     </div>
+    {% endif %}
 
     <!-- Terminal-style loading overlay — shown after region selection -->
     <div id="loading-screen">
@@ -331,10 +333,12 @@
             <div data-band-label style="flex:1; font-size:12px; color:#555; background:#eaf4ff; border:1px solid #b3d4f5; border-radius:5px; padding:6px 10px;">
                 📡 Band: <strong>2100 MHz</strong> (LTE B4) &nbsp;·&nbsp; Windsor, ON
             </div>
+            {% if not preset_region %}
             <button onclick="switchRegion()" title="Switch region"
                 style="padding:5px 10px; font-size:11px; background:#fff; border:1px solid #b3d4f5; border-radius:5px; color:#555; cursor:pointer; white-space:nowrap;">
                 ⇄ Switch Region
             </button>
+            {% endif %}
         </div>
         <div id="region-island-note" style="display:none; font-size:11px; color:#7a5800; background:#fff8e1; border:1px solid #ffe082; border-radius:4px; padding:5px 8px; margin-bottom:4px;">
             ⚠ Model coverage: <strong>Island of Montréal only</strong>. Laval and off-island suburbs are not yet supported.
@@ -1662,45 +1666,49 @@
         console.log('Site Deployment Tool initialized');
         console.log('Click anywhere on the map to test a site location');
 
-        // Auto-restore last region from localStorage so refresh skips the selector.
-        // Check /api/status first — if backend is already loaded for this region,
-        // bypass the loading screen entirely and go straight to the map.
-        const _savedRegion = localStorage.getItem('rf_region');
-        if (_savedRegion && REGION_CONFIGS[_savedRegion]) {
-            fetch('/api/status')
-                .then(r => r.json())
-                .then(data => {
-                    if (data.ready) {
-                        // Container already loaded — skip loading screen
-                        _selectedRegion = _savedRegion;
-                        const cfg = REGION_CONFIGS[_savedRegion];
-                        map.setView(cfg.center, cfg.zoom);
-                        const bandEl = document.querySelector('[data-band-label]');
-                        if (bandEl) bandEl.textContent = '📡 Band: ' + cfg.band + '  ·  ' + cfg.label;
-                        const modelSel  = document.getElementById('model-variant');
-                        const modelAuto = document.getElementById('model-auto-label');
-                        const islandNote = document.getElementById('region-island-note');
-                        if (_savedRegion === 'montreal') {
-                            if (modelSel)  modelSel.style.display  = 'none';
-                            if (modelAuto) modelAuto.style.display = '';
-                            if (islandNote) islandNote.style.display = '';
+        // If REGION env var is set on the server, auto-start with that region.
+        // Otherwise restore from localStorage (multi-region dev mode).
+        const _presetRegion = {{ preset_region | tojson }};
+        if (_presetRegion && REGION_CONFIGS[_presetRegion]) {
+            // Per-city deployment: backend already auto-initing, just start polling
+            selectRegion(_presetRegion);
+        } else {
+            // Multi-region mode: restore last region from localStorage
+            const _savedRegion = localStorage.getItem('rf_region');
+            if (_savedRegion && REGION_CONFIGS[_savedRegion]) {
+                fetch('/api/status')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.ready) {
+                            // Container already loaded — skip loading screen
+                            _selectedRegion = _savedRegion;
+                            const cfg = REGION_CONFIGS[_savedRegion];
+                            map.setView(cfg.center, cfg.zoom);
+                            const bandEl = document.querySelector('[data-band-label]');
+                            if (bandEl) bandEl.textContent = '📡 Band: ' + cfg.band + '  ·  ' + cfg.label;
+                            const modelSel  = document.getElementById('model-variant');
+                            const modelAuto = document.getElementById('model-auto-label');
+                            const islandNote = document.getElementById('region-island-note');
+                            if (_savedRegion === 'montreal') {
+                                if (modelSel)  modelSel.style.display  = 'none';
+                                if (modelAuto) modelAuto.style.display = '';
+                                if (islandNote) islandNote.style.display = '';
+                            } else {
+                                if (modelSel)  modelSel.style.display  = '';
+                                if (modelAuto) modelAuto.style.display = 'none';
+                                if (islandNote) islandNote.style.display = 'none';
+                            }
+                            fetch('/api/init', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({region: _savedRegion}),
+                            }).then(() => onRegionReady());
                         } else {
-                            if (modelSel)  modelSel.style.display  = '';
-                            if (modelAuto) modelAuto.style.display = 'none';
-                            if (islandNote) islandNote.style.display = 'none';
+                            selectRegion(_savedRegion);
                         }
-                        // No-op init call (backend skips re-init), then load layers
-                        fetch('/api/init', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({region: _savedRegion}),
-                        }).then(() => onRegionReady());
-                    } else {
-                        // Cold start or different region — normal flow with loading screen
-                        selectRegion(_savedRegion);
-                    }
-                })
-                .catch(() => selectRegion(_savedRegion));
+                    })
+                    .catch(() => selectRegion(_savedRegion));
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════════
