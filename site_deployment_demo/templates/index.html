@@ -1670,8 +1670,38 @@
         // Otherwise restore from localStorage (multi-region dev mode).
         const _presetRegion = {{ preset_region | tojson }};
         if (_presetRegion && REGION_CONFIGS[_presetRegion]) {
-            // Per-city deployment: backend already auto-initing, just start polling
-            selectRegion(_presetRegion);
+            // Per-city deployment: check if already warm (min-instances=1 keeps it loaded)
+            fetch('/api/status')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.ready) {
+                        _selectedRegion = _presetRegion;
+                        const cfg = REGION_CONFIGS[_presetRegion];
+                        map.setView(cfg.center, cfg.zoom);
+                        const bandEl = document.querySelector('[data-band-label]');
+                        if (bandEl) bandEl.textContent = '📡 Band: ' + cfg.band + '  ·  ' + cfg.label;
+                        const modelSel  = document.getElementById('model-variant');
+                        const modelAuto = document.getElementById('model-auto-label');
+                        const islandNote = document.getElementById('region-island-note');
+                        if (_presetRegion === 'montreal') {
+                            if (modelSel)  modelSel.style.display  = 'none';
+                            if (modelAuto) modelAuto.style.display = '';
+                            if (islandNote) islandNote.style.display = '';
+                        } else {
+                            if (modelSel)  modelSel.style.display  = '';
+                            if (modelAuto) modelAuto.style.display = 'none';
+                            if (islandNote) islandNote.style.display = 'none';
+                        }
+                        fetch('/api/init', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({region: _presetRegion}),
+                        }).then(() => onRegionReady());
+                    } else {
+                        selectRegion(_presetRegion);
+                    }
+                })
+                .catch(() => selectRegion(_presetRegion));
         } else {
             // Multi-region mode: restore last region from localStorage
             const _savedRegion = localStorage.getItem('rf_region');
