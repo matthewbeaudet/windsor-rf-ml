@@ -16,7 +16,7 @@
 
 substitutions:
   _TAG: 'latest'
-  _IMAGE: 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml'
+  _IMAGE: 'northamerica-northeast1-docker.pkg.dev/windsor-ml-model-lab-3e360e/windsor-rf-ml/windsor-rf-ml'
 
 steps:
   # Step 1: Build the Docker image
