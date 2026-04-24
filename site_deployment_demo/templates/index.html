@@ -795,6 +795,9 @@
             if (document.getElementById('ised-toggle').checked) {
                 loadIsedSites().then(() => { if (isedLayer) isedLayer.addTo(map); });
             }
+            // Reload bad IMSI layer for the new region
+            if (badImsiLayer) { map.removeLayer(badImsiLayer); badImsiLayer = null; }
+            if (badImsiVisible) { refreshBadImsiLayer(); }
         }
 
         function startPolling() {
