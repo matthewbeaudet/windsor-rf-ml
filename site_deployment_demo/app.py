@@ -61,6 +61,11 @@ def init_region():
     global _current_region_cfg, _startup_log, _startup_ready, _startup_error, predictor, _ised_sites_cache, _bad_bins_df, _bad_bins_dict
     region_name = (request.json or {}).get('region', 'windsor')
     cfg = REGIONS.get(region_name, WINDSOR)
+
+    # If same region is already fully loaded, skip re-init (page refresh case)
+    if cfg.name == _current_region_cfg.name and _startup_ready and predictor is not None:
+        return jsonify({'region': cfg.name, 'display_name': cfg.display_name, 'already_ready': True})
+
     _current_region_cfg = cfg
     # Reset startup state and region-dependent caches
     predictor         = None
@@ -802,7 +807,7 @@ def _load_bad_bins(region_name=None):
     bucket_name = os.environ.get('GCS_BUCKET', 'windsor-rf-ml-data')
 
     if region_name == 'montreal':
-        blob_name  = 'montreal/weekly_bad_imsi'
+        blob_name  = 'montreal/weekly_bad_imsi.csv'
         tmp_path   = Path('/tmp/bad_bins_mtl.csv')
         local_path = None
     else:
