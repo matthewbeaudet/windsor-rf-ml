@@ -1,21 +1,22 @@
 # ============================================================
-# Cloud Build CI/CD Pipeline — Windsor RF ML
+# Cloud Build CI/CD Pipeline — RF ML Tool (all regions)
 # Triggered automatically on every push to the main branch.
 #
 # Pipeline:
 #   1. Build Docker image
 #   2. Push to Artifact Registry
-#   3. Deploy to Cloud Run (northamerica-northeast1)
+#   3. Deploy to each Cloud Run service (one per region)
 #
 # Prerequisites (one-time GCP setup):
 #   - Enable APIs: Cloud Build, Cloud Run, Artifact Registry, Cloud Storage
 #   - Connect GitHub repo to Cloud Build in the GCP console
 #   - Grant Cloud Build service account the Cloud Run Admin role
-#   - Create GCS bucket: windsor-gcs with the data files (see README.md)
+#   - Create GCS bucket: windsor-rf-ml-data with data files per region
 # ============================================================
 
 substitutions:
   _TAG: 'latest'
+  _IMAGE: 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml'
 
 steps:
   # Step 1: Build the Docker image
@@ -23,43 +24,37 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:${_TAG}'
+      - '${_IMAGE}:${_TAG}'
       - '-t'
-      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:latest'
+      - '${_IMAGE}:latest'
       - '.'
 
   # Step 2: Push the image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
-      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:${_TAG}'
+    args: ['push', '${_IMAGE}:${_TAG}']
 
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
-      - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:latest'
+    args: ['push', '${_IMAGE}:latest']
 
-  # Step 3: Deploy to Cloud Run
+  # Step 3: Deploy Windsor
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
       - 'run'
       - 'deploy'
       - 'windsor-rf-ml'
-      - '--image=northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:${_TAG}'
+      - '--image=${_IMAGE}:${_TAG}'
       - '--region=northamerica-northeast1'
       - '--platform=managed'
-      - '--memory=16Gi'
-      - '--cpu=4'
+      - '--memory=8Gi'
+      - '--cpu=2'
       - '--min-instances=1'
-      - '--max-instances=5'
+      - '--max-instances=1'
       - '--timeout=300'
       - '--concurrency=10'
-      - '--set-env-vars=GCS_BUCKET=windsor-rf-ml-data'
+      - '--set-env-vars=GCS_BUCKET=windsor-rf-ml-data,REGION=windsor'
       - '--no-allow-unauthenticated'
 
-  # Step 4: Grant invoker access to TELUS org users
-  # (org policy blocks allUsers; domain:telus.com is allowed within the org constraint)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -71,9 +66,39 @@ steps:
       - '--member=domain:telus.com'
       - '--role=roles/run.invoker'
 
+  # Step 4: Deploy Montreal
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'montreal-rf-ml'
+      - '--image=${_IMAGE}:${_TAG}'
+      - '--region=northamerica-northeast1'
+      - '--platform=managed'
+      - '--memory=16Gi'
+      - '--cpu=4'
+      - '--min-instances=1'
+      - '--max-instances=1'
+      - '--timeout=300'
+      - '--concurrency=10'
+      - '--set-env-vars=GCS_BUCKET=windsor-rf-ml-data,REGION=montreal'
+      - '--no-allow-unauthenticated'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'services'
+      - 'add-iam-policy-binding'
+      - 'montreal-rf-ml'
+      - '--region=northamerica-northeast1'
+      - '--member=domain:telus.com'
+      - '--role=roles/run.invoker'
+
 images:
-  - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:${_TAG}'
-  - 'northamerica-northeast1-docker.pkg.dev/$PROJECT_ID/windsor-rf-ml/windsor-rf-ml:latest'
+  - '${_IMAGE}:${_TAG}'
+  - '${_IMAGE}:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
