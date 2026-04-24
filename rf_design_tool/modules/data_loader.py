@@ -12,10 +12,13 @@ import logging
 from typing import Dict, Optional, Tuple
 import h3
 
-# ── Google Cloud Storage lazy download ────────────────────────────────────────
-# All region data files are downloaded lazily when a region is first selected.
-# No files are downloaded at module import time.
-# When running locally, GCS_BUCKET is not set and all downloads are skipped.
+# ── Google Cloud Storage download ─────────────────────────────────────────────
+# When REGION env var is set (per-city deployment), files are pre-downloaded at
+# module import time — before gunicorn starts listening — so they're already in
+# /tmp/ when the background init thread runs. This restores the fast startup
+# behaviour from before multi-region support was added.
+# When REGION is not set (local dev / multi-region mode), downloads are lazy.
+# When GCS_BUCKET is not set (local dev), all downloads are skipped entirely.
 
 _GCS_BUCKET = os.environ.get("GCS_BUCKET", "windsor-rf-ml-data")
 
@@ -66,6 +69,12 @@ def download_region_files(region_name: str):
     except Exception as e:
         print(f"GCS {label} download failed: {e}")
         raise
+
+
+# Pre-download at import time for per-city deployments (REGION env var set)
+_startup_region = os.environ.get('REGION', '').lower()
+if _startup_region and os.environ.get('GCS_BUCKET'):
+    download_region_files(_startup_region)
 
 
 def _resolve_path(local_path: Path, tmp_name: str) -> Path:
