@@ -60,7 +60,6 @@ def _init_predictor_background(region_cfg):
         _startup_log.append('> Baseline network loaded.')
         _startup_log.append('> Pre-computing coverage layers...')
         _get_baseline_with_coords()
-        _build_baseline_hexes()
         _startup_log.append('> System ready.')
         _startup_ready = True
     except Exception as e:
@@ -226,25 +225,27 @@ def _get_baseline_with_coords():
     return _baseline_with_coords
 
 
-def _build_baseline_hexes():
+def _get_baseline_hex_layer(res):
+    """Return baseline hex layer at given resolution, computing and caching on first use."""
     global _baseline_hexes
+    if res in _baseline_hexes:
+        return _baseline_hexes[res]
     import h3 as h3lib
     df = _get_baseline_with_coords()
     if df is None or df.empty:
-        return
-    _baseline_hexes = {}
-    for res in (5, 6, 7, 8, 9, 10, 11, 12):
-        tmp = df.copy()
-        tmp['display_hex'] = tmp['h3_index'].apply(
-            lambda x: h3lib.cell_to_parent(x, res) if h3lib.get_resolution(x) > res else x
-        )
-        agg = tmp.groupby('display_hex')['predicted_rsrp'].mean().round(1).reset_index()
-        agg.columns = ['h3_index', 'predicted_rsrp']
-        centers = [h3lib.cell_to_latlng(h) for h in agg['h3_index']]
-        agg['lat'] = [c[0] for c in centers]
-        agg['lon'] = [c[1] for c in centers]
-        _baseline_hexes[res] = agg
-    print(f"  OK Hex layers: {', '.join(f'res{r}={len(_baseline_hexes[r]):,}' for r in sorted(_baseline_hexes))}")
+        return None
+    unique = df['h3_index'].unique()
+    parent_map = {h: (h3lib.cell_to_parent(h, res) if h3lib.get_resolution(h) > res else h)
+                  for h in unique}
+    tmp = df.copy()
+    tmp['display_hex'] = tmp['h3_index'].map(parent_map)
+    agg = tmp.groupby('display_hex')['predicted_rsrp'].mean().round(1).reset_index()
+    agg.columns = ['h3_index', 'predicted_rsrp']
+    centers = [h3lib.cell_to_latlng(h) for h in agg['h3_index']]
+    agg['lat'] = [c[0] for c in centers]
+    agg['lon'] = [c[1] for c in centers]
+    _baseline_hexes[res] = agg
+    return agg
 
 
 def _zoom_to_h3_res(zoom):
@@ -269,7 +270,7 @@ def baseline_coverage():
         zoom    = int(request.args.get('zoom', 13))
 
         target_res = _zoom_to_h3_res(zoom)
-        hex_df = _baseline_hexes.get(target_res)
+        hex_df = _get_baseline_hex_layer(target_res)
         if hex_df is None or hex_df.empty:
             return jsonify({'hexes': [], 'res': target_res})
 
