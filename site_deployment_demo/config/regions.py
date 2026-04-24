@@ -85,7 +85,7 @@ MONTREAL = RegionConfig(
     display_name='Montréal, QC',
     map_center=(45.5017, -73.5673),
     map_zoom=12,
-    bounds=dict(min_lat=45.40, max_lat=45.70, min_lon=-74.00, max_lon=-73.45),
+    bounds=dict(min_lat=45.30, max_lat=45.80, min_lon=-74.10, max_lon=-73.20),
     terrain_elevation_m=50.0,
     default_rs_epre_dbm=16.57,
     default_edt_deg=4.4,

@@ -831,12 +831,15 @@ def _morton_compact(x):
     return x
 
 def _quadbin_center(cell):
-    """Return (lon, lat) center of a Carto quadbin cell. Pure Python, no package."""
+    """Return (lon, lat) center of a Carto quadbin cell. Pure Python, no package.
+    CARTO encodes tile x/y as 26-bit values regardless of resolution, so right-shift
+    the full Morton-decoded coordinates by (26 - resolution) to get tile indices."""
     import math
     resolution = (cell >> 52) & 0x1F
     payload    = cell & ((1 << 52) - 1)
-    x = _morton_compact(payload)
-    y = _morton_compact(payload >> 1)
+    shift      = 26 - resolution          # CARTO pads coords to 26 bits before interleave
+    x = _morton_compact(payload)          >> shift
+    y = _morton_compact(payload >> 1)     >> shift
     n   = 1 << resolution
     lon = (x + 0.5) / n * 360.0 - 180.0
     lat = math.degrees(math.atan(math.sinh(math.pi * (1.0 - 2.0 * (y + 0.5) / n))))
