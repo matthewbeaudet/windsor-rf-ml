@@ -864,7 +864,7 @@ def _load_bad_bins(region_name=None):
         tmp_path   = Path('/tmp/bad_bins_mtl.csv')
         local_path = None
     else:
-        blob_name  = os.environ.get('GCS_BAD_BINS_BLOB', 'weekly_bad_imsis')
+        blob_name  = os.environ.get('GCS_BAD_BINS_BLOB', 'weekly_bad_imsi.csv')
         tmp_path   = Path('/tmp/bad_bins_wnd.csv')
         local_path = Path(__file__).parent / 'data' / 'bad_bins_wnd.csv'
 
