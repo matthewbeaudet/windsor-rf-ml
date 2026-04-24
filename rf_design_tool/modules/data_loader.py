@@ -12,16 +12,14 @@ import logging
 from typing import Dict, Optional, Tuple
 import h3
 
-# ── Google Cloud Storage startup download ─────────────────────────────────────
-# When running on Cloud Run, GCS_BUCKET env var is set to 'windsor-gcs'.
-# This block downloads the large data files from GCS to /tmp/ once at startup.
-# When running locally, GCS_BUCKET is not set and this block is skipped entirely.
+# ── Google Cloud Storage lazy download ────────────────────────────────────────
+# All region data files are downloaded lazily when a region is first selected.
+# No files are downloaded at module import time.
+# When running locally, GCS_BUCKET is not set and all downloads are skipped.
 
 _GCS_BUCKET = os.environ.get("GCS_BUCKET", "windsor-rf-ml-data")
-_GCS_PREFIX = ""  # files live at gs://windsor-rf-ml-data/<filename> (root level)
 
-# Map of GCS object name → local destination path
-_GCS_FILES = {
+_GCS_FILES_WINDSOR = {
     "h3_complete_features_windsor.csv":    "/tmp/h3_complete_features_windsor.csv",
     "h3_dsm_clutter_database.csv":         "/tmp/h3_dsm_clutter_database.csv",
     "h3_dem_database.csv":                 "/tmp/h3_dem_database.csv",
@@ -30,68 +28,33 @@ _GCS_FILES = {
     "missing_sites_dataset.csv":           "/tmp/missing_sites_dataset.csv",
 }
 
-
-def _download_from_gcs():
-    """
-    Download large data files from GCS to /tmp/ at Cloud Run startup.
-    Only runs when GCS_BUCKET environment variable is set.
-    Safe to call multiple times — skips files already present in /tmp/.
-    """
-    if "GCS_BUCKET" not in os.environ:
-        return  # Local development — data files are at base_path directly
-
-    try:
-        from google.cloud import storage
-        client = storage.Client()
-        bucket = client.bucket(_GCS_BUCKET)
-        print(f"GCS startup download from gs://{_GCS_BUCKET}/")
-        for gcs_name, local_path in _GCS_FILES.items():
-            if Path(local_path).exists():
-                print(f"  ✓ Already present: {local_path}")
-                continue
-            # Build blob path: if prefix is empty use filename directly, else prefix/filename
-            blob_name = f"{_GCS_PREFIX}/{gcs_name}" if _GCS_PREFIX else gcs_name
-            blob = bucket.blob(blob_name)
-            print(f"  ↓ Downloading gs://{_GCS_BUCKET}/{blob_name} → {local_path}")
-            blob.download_to_filename(local_path)
-            print(f"  ✓ Done: {local_path}")
-        print("GCS startup download complete.\n")
-    except Exception as e:
-        print(f"WARNING: GCS download failed: {e}")
-        print("  Falling back to local file paths.")
-
-
-# Run at module import time (once per container instance)
-_download_from_gcs()
-
-
 _GCS_FILES_MONTREAL = {
-    "montreal/h3_complete_features_montreal.csv":         "/tmp/h3_complete_features_montreal.csv",
-    "montreal/h3_dsm_database_montreal.csv":              "/tmp/h3_dsm_database_montreal.csv",
-    "montreal/h3_dem_database_montreal.csv":              "/tmp/h3_dem_database_montreal.csv",
-    "montreal/montreal_baseline_rsrp.csv":                "/tmp/montreal_baseline_rsrp.csv",
-    "montreal/lgbm_montreal_53feat_urban_model.joblib":   "/tmp/lgbm_montreal_53feat_urban_model.joblib",
-    "montreal/lgbm_montreal_53feat_suburban_model.joblib":"/tmp/lgbm_montreal_53feat_suburban_model.joblib",
-    "montreal/lgbm_montreal_53feat_urban_features.json":  "/tmp/lgbm_montreal_53feat_urban_features.json",
+    "montreal/h3_complete_features_montreal.csv":          "/tmp/h3_complete_features_montreal.csv",
+    "montreal/h3_dsm_database_montreal.csv":               "/tmp/h3_dsm_database_montreal.csv",
+    "montreal/h3_dem_database_montreal.csv":               "/tmp/h3_dem_database_montreal.csv",
+    "montreal/montreal_baseline_rsrp.csv":                 "/tmp/montreal_baseline_rsrp.csv",
+    "montreal/lgbm_montreal_53feat_urban_model.joblib":    "/tmp/lgbm_montreal_53feat_urban_model.joblib",
+    "montreal/lgbm_montreal_53feat_suburban_model.joblib": "/tmp/lgbm_montreal_53feat_suburban_model.joblib",
+    "montreal/lgbm_montreal_53feat_urban_features.json":   "/tmp/lgbm_montreal_53feat_urban_features.json",
     "montreal/lgbm_montreal_53feat_suburban_features.json":"/tmp/lgbm_montreal_53feat_suburban_features.json",
-    "montreal/urban_mtl.geojson":                         "/tmp/urban_mtl.geojson",
-    "montreal/mtl_cells_1900_2100.csv":                   "/tmp/mtl_cells_1900_2100.csv",
+    "montreal/urban_mtl.geojson":                          "/tmp/urban_mtl.geojson",
+    "montreal/mtl_cells_1900_2100.csv":                    "/tmp/mtl_cells_1900_2100.csv",
 }
 
 
 def download_region_files(region_name: str):
-    """Download Montreal data files from GCS lazily (only when Montreal is selected).
-    No-op locally (GCS_BUCKET not set) and skips files already in /tmp/."""
+    """Download data files for the selected region from GCS to /tmp/.
+    No-op locally (GCS_BUCKET not set). Skips files already present."""
     if "GCS_BUCKET" not in os.environ:
         return
-    if region_name != "montreal":
-        return
+    files = _GCS_FILES_WINDSOR if region_name == 'windsor' else _GCS_FILES_MONTREAL
+    label = region_name.capitalize()
     try:
         from google.cloud import storage
         client = storage.Client()
         bucket = client.bucket(_GCS_BUCKET)
-        print(f"GCS: downloading Montreal data files from gs://{_GCS_BUCKET}/montreal/")
-        for gcs_name, local_path in _GCS_FILES_MONTREAL.items():
+        print(f"GCS: downloading {label} data files from gs://{_GCS_BUCKET}/")
+        for gcs_name, local_path in files.items():
             if Path(local_path).exists():
                 print(f"  ✓ Already present: {local_path}")
                 continue
@@ -99,9 +62,9 @@ def download_region_files(region_name: str):
             print(f"  ↓ {gcs_name}")
             blob.download_to_filename(local_path)
             print(f"  ✓ Done: {local_path}")
-        print("GCS: Montreal files ready.\n")
+        print(f"GCS: {label} files ready.\n")
     except Exception as e:
-        print(f"GCS Montreal download failed: {e}")
+        print(f"GCS {label} download failed: {e}")
         raise
 
 

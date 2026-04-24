@@ -81,9 +81,9 @@ def init_region():
         if cfg.name == _current_region_cfg.name and _startup_ready and predictor is not None:
             return jsonify({'region': cfg.name, 'display_name': cfg.display_name, 'already_ready': True})
 
-        # Background init already running for this region — don't spawn a second thread
-        if cfg.name == _current_region_cfg.name and _startup_loading:
-            return jsonify({'region': cfg.name, 'display_name': cfg.display_name, 'loading': True})
+        # Any init is already running — block to prevent dual-load OOM
+        if _startup_loading:
+            return jsonify({'region': _current_region_cfg.name, 'display_name': _current_region_cfg.display_name, 'loading': True})
 
         _current_region_cfg = cfg
         _startup_loading  = True
