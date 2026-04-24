@@ -7,6 +7,7 @@ from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 import sys
 import json
+import logging
 import threading
 import pandas as pd
 from pathlib import Path
@@ -20,16 +21,26 @@ from config.regions import REGIONS, WINDSOR
 app = Flask(__name__)
 CORS(app)
 
+# Suppress access-log noise from the 1-second /api/status polling
+class _SuppressStatusPolling(logging.Filter):
+    def filter(self, record):
+        return '/api/status' not in record.getMessage()
+
+logging.getLogger('werkzeug').addFilter(_SuppressStatusPolling())
+
 # ── Startup state ─────────────────────────────────────────────────────────────
-predictor      = None
-_startup_log   = []
-_startup_ready = False
-_startup_error = None
+predictor        = None
+_startup_log     = []
+_startup_ready   = False
+_startup_error   = None
+_startup_loading = False          # True while background init thread is running
+_init_lock       = threading.Lock()
 _current_region_cfg = WINDSOR   # set by /api/init before background thread starts
 
 
 def _init_predictor_background(region_cfg):
-    global predictor, _startup_ready, _startup_error, _baseline_with_coords, _clutter_height_index, _clutter_layer_index, _baseline_hexes
+    global predictor, _startup_ready, _startup_error, _startup_loading
+    global _baseline_with_coords, _clutter_height_index, _clutter_layer_index, _baseline_hexes
     _baseline_with_coords = None
     _clutter_height_index = None
     _clutter_layer_index  = None
@@ -50,6 +61,8 @@ def _init_predictor_background(region_cfg):
     except Exception as e:
         _startup_error = str(e)
         _startup_log.append(f'> ERROR: {e}')
+    finally:
+        _startup_loading = False
 
 
 @app.route('/api/init', methods=['POST'])
@@ -58,27 +71,34 @@ def init_region():
     Select region and start background initialization.
     Must be called before /api/status is polled.
     """
-    global _current_region_cfg, _startup_log, _startup_ready, _startup_error, predictor, _ised_sites_cache, _bad_bins_df, _bad_bins_dict
+    global _current_region_cfg, _startup_log, _startup_ready, _startup_error, _startup_loading
+    global predictor, _ised_sites_cache, _bad_bins_df, _bad_bins_dict
     region_name = (request.json or {}).get('region', 'windsor')
     cfg = REGIONS.get(region_name, WINDSOR)
 
-    # If same region is already fully loaded, skip re-init (page refresh case)
-    if cfg.name == _current_region_cfg.name and _startup_ready and predictor is not None:
-        return jsonify({'region': cfg.name, 'display_name': cfg.display_name, 'already_ready': True})
+    with _init_lock:
+        # Already fully loaded for this region — skip re-init
+        if cfg.name == _current_region_cfg.name and _startup_ready and predictor is not None:
+            return jsonify({'region': cfg.name, 'display_name': cfg.display_name, 'already_ready': True})
 
-    _current_region_cfg = cfg
-    # Reset startup state and region-dependent caches
-    predictor         = None
-    _startup_log      = []
-    _startup_ready    = False
-    _startup_error    = None
-    _ised_sites_cache = None   # force reload with correct region bounds
-    get_sites._cached = None   # force reload with correct region sites
-    _bad_bins_df      = None   # force reload for new region
-    _bad_bins_dict    = None
-    threading.Thread(
-        target=_init_predictor_background, args=(cfg,), daemon=True
-    ).start()
+        # Background init already running for this region — don't spawn a second thread
+        if cfg.name == _current_region_cfg.name and _startup_loading:
+            return jsonify({'region': cfg.name, 'display_name': cfg.display_name, 'loading': True})
+
+        _current_region_cfg = cfg
+        _startup_loading  = True
+        # Reset startup state and region-dependent caches
+        predictor         = None
+        _startup_log      = []
+        _startup_ready    = False
+        _startup_error    = None
+        _ised_sites_cache = None   # force reload with correct region bounds
+        get_sites._cached = None   # force reload with correct region sites
+        _bad_bins_df      = None   # force reload for new region
+        _bad_bins_dict    = None
+        threading.Thread(
+            target=_init_predictor_background, args=(cfg,), daemon=True
+        ).start()
     return jsonify({'region': cfg.name, 'display_name': cfg.display_name})
 
 def _get_predictor():
