@@ -87,8 +87,10 @@ class SitePredictor:
             # Support both column names used by Windsor and Montreal baselines
             rsrp_col = self.cfg.baseline_rsrp_col
             if rsrp_col not in bl.columns:
-                # Fallback: try the other known name
-                rsrp_col = 'predicted_rsrp' if rsrp_col == 'baseline_rsrp' else 'baseline_rsrp'
+                for candidate in ('avg_rsrp', 'predicted_rsrp', 'baseline_rsrp'):
+                    if candidate in bl.columns:
+                        rsrp_col = candidate
+                        break
             self.baseline_dict = dict(zip(bl['h3_index'], bl[rsrp_col]))
             print(f"  OK Baseline: {len(self.baseline_dict):,} bins  "
                   f"({bl[rsrp_col].min():.1f} to {bl[rsrp_col].max():.1f} dBm)")
