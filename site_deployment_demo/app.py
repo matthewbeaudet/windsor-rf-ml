@@ -78,6 +78,7 @@ def init_region():
     """
     global _current_region_cfg, _startup_log, _startup_ready, _startup_error, _startup_loading
     global predictor, _ised_sites_cache, _bad_bins_df, _bad_bins_dict
+    global _baseline_with_coords, _baseline_hexes, _poor_hexes, _clutter_height_index
     region_name = (request.json or {}).get('region', 'windsor')
     cfg = REGIONS.get(region_name, WINDSOR)
 
@@ -97,10 +98,14 @@ def init_region():
         _startup_log      = []
         _startup_ready    = False
         _startup_error    = None
-        _ised_sites_cache = None   # force reload with correct region bounds
-        get_sites._cached = None   # force reload with correct region sites
-        _bad_bins_df      = None   # force reload for new region
-        _bad_bins_dict    = None
+        _ised_sites_cache    = None   # force reload with correct region bounds
+        get_sites._cached    = None   # force reload with correct region sites
+        _bad_bins_df         = None   # force reload for new region
+        _bad_bins_dict       = None
+        _baseline_with_coords = None  # force rebuild for new region baseline
+        _baseline_hexes      = {}
+        _poor_hexes          = {}
+        _clutter_height_index = None
         threading.Thread(
             target=_init_predictor_background, args=(cfg,), daemon=True
         ).start()
@@ -950,46 +955,47 @@ def bad_imsi_bins():
         return jsonify({'error': str(e)}), 500
 
 
-# Cached poor-coverage index: baseline bins with predicted_rsrp <= -109.5
-_poor_coverage_index = None
+# Cached poor-coverage hex layers keyed by H3 resolution (mirrors _baseline_hexes)
+_poor_hexes = {}
 
-def _get_poor_coverage_index():
-    """Build and cache the poor-coverage index (RSRP <= -109.5 dBm)."""
-    global _poor_coverage_index
-    if _poor_coverage_index is not None:
-        return _poor_coverage_index
-
-    import h3 as h3lib
-    df = _get_baseline_with_coords()
-    poor = df[df['predicted_rsrp'] <= -109.5][['lat', 'lon', 'predicted_rsrp']].copy()
-    poor = poor.rename(columns={'predicted_rsrp': 'rsrp'})
-    poor['rsrp'] = poor['rsrp'].round(1)
-    _poor_coverage_index = poor
-    print(f"  OK Poor coverage index built: {len(poor):,} bins (<= -109.5 dBm)")
-    return _poor_coverage_index
+def _get_poor_hex_layer(res):
+    """Return hex layer of bins with predicted_rsrp <= -109.5 dBm at given resolution."""
+    global _poor_hexes
+    if res in _poor_hexes:
+        return _poor_hexes[res]
+    hex_df = _get_baseline_hex_layer(res)
+    if hex_df is None or hex_df.empty:
+        _poor_hexes[res] = pd.DataFrame(columns=['h3_index', 'predicted_rsrp', 'lat', 'lon'])
+        return _poor_hexes[res]
+    poor = hex_df[hex_df['predicted_rsrp'] <= -109.5].copy()
+    _poor_hexes[res] = poor
+    print(f"  Poor coverage hex layer res{res}: {len(poor):,} bins")
+    return poor
 
 
 @app.route('/api/poor_coverage', methods=['GET'])
 def poor_coverage():
-    """
-    Return baseline bins with RSRP <= -109.5 dBm (poor + very poor) for the viewport.
-    """
+    """Return poor-coverage bins (RSRP <= -109.5 dBm) as H3 hexes at zoom-appropriate resolution."""
     try:
         b = _current_region_cfg.bounds
         min_lat = float(request.args.get('min_lat', b['min_lat']))
         max_lat = float(request.args.get('max_lat', b['max_lat']))
         min_lon = float(request.args.get('min_lon', b['min_lon']))
         max_lon = float(request.args.get('max_lon', b['max_lon']))
+        zoom    = int(request.args.get('zoom', 13))
 
-        df = _get_poor_coverage_index()
+        target_res = _zoom_to_h3_res(zoom)
+        hex_df = _get_poor_hex_layer(target_res)
+        if hex_df is None or hex_df.empty:
+            return jsonify({'hexes': [], 'res': target_res})
+
         mask = (
-            (df['lat'] >= min_lat) & (df['lat'] <= max_lat) &
-            (df['lon'] >= min_lon) & (df['lon'] <= max_lon)
+            (hex_df['lat'] >= min_lat) & (hex_df['lat'] <= max_lat) &
+            (hex_df['lon'] >= min_lon) & (hex_df['lon'] <= max_lon)
         )
-        vp = df[mask]
-        points = vp[['lat', 'lon', 'rsrp']].values.tolist()
-        print(f"  Poor coverage viewport: {len(points):,} bins")
-        return jsonify({'points': points})
+        hexes = hex_df[mask][['h3_index', 'predicted_rsrp']].values.tolist()
+        print(f"  Poor coverage viewport: {len(hexes):,} hexes at res {target_res}")
+        return jsonify({'hexes': hexes, 'res': target_res})
     except Exception as e:
         print(f"Error in poor_coverage: {e}")
         return jsonify({'error': str(e)}), 500

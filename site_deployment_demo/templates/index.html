@@ -998,30 +998,32 @@
         async function refreshPoorLayer() {
             if (!poorVisible) return;
             const bounds = map.getBounds();
-            const params = new URLSearchParams({
-                min_lat: bounds.getSouth().toFixed(5),
-                max_lat: bounds.getNorth().toFixed(5),
-                min_lon: bounds.getWest().toFixed(5),
-                max_lon: bounds.getEast().toFixed(5),
-            });
+            const zoom = map.getZoom();
+            const url = `/api/poor_coverage?min_lat=${bounds.getSouth().toFixed(5)}&max_lat=${bounds.getNorth().toFixed(5)}&min_lon=${bounds.getWest().toFixed(5)}&max_lon=${bounds.getEast().toFixed(5)}&zoom=${zoom}`;
             document.getElementById('poor-coverage-loading').style.display = 'block';
             try {
-                const resp = await fetch('/api/poor_coverage?' + params);
+                const resp = await fetch(url);
                 const data = await resp.json();
                 if (poorLayer) { map.removeLayer(poorLayer); poorLayer = null; }
                 if (!poorVisible) return;
-                const r = dotRadius();
-                const features = (data.points || []).map(p => ({
-                    type: 'Feature',
-                    geometry: { type: 'Point', coordinates: [p[1], p[0]] },
-                    properties: { rsrp: p[2] }
-                }));
+                const features = (data.hexes || []).map(([h3Index, rsrp]) => {
+                    const boundary = h3.cellToBoundary(h3Index);
+                    const coords   = boundary.map(([lat, lng]) => [lng, lat]);
+                    coords.push(coords[0]);
+                    return {
+                        type: 'Feature',
+                        geometry: { type: 'Polygon', coordinates: [coords] },
+                        properties: { rsrp }
+                    };
+                });
                 poorLayer = L.geoJSON({ type: 'FeatureCollection', features }, {
-                    pointToLayer: function(feature, latlng) {
-                        return L.circleMarker(latlng, {
-                            radius: r, fillColor: rsrpToHex(feature.properties.rsrp),
-                            fillOpacity: 0.75, color: '#333', weight: 0.3
-                        });
+                    style: function(feature) {
+                        return {
+                            fillColor:   rsrpToHex(feature.properties.rsrp),
+                            fillOpacity: 0.65,
+                            color:       'none',
+                            weight:      0
+                        };
                     },
                     onEachFeature: function(feature, layer) {
                         layer.bindPopup(`<strong>Poor Coverage</strong><br>${feature.properties.rsrp} dBm`);
