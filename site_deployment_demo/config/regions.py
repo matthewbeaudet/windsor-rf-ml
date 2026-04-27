@@ -30,6 +30,20 @@ def _mtl(filename: str) -> Path:
         return Path('/tmp') / filename
     return _MTL / filename
 
+def _mtl_model(filename: str) -> Path:
+    """Like _mtl but for files in the local Model/ subdirectory."""
+    import os
+    if os.environ.get('GCS_BUCKET'):
+        return Path('/tmp') / filename
+    return _MTL / 'Model' / filename
+
+def _mtl_h3(filename: str) -> Path:
+    """Like _mtl but for files in the local H3_Databases/ subdirectory."""
+    import os
+    if os.environ.get('GCS_BUCKET'):
+        return Path('/tmp') / filename
+    return _MTL / 'H3_Databases' / filename
+
 
 @dataclass
 class RegionConfig:
@@ -89,17 +103,17 @@ MONTREAL = RegionConfig(
     terrain_elevation_m=50.0,
     default_rs_epre_dbm=16.57,
     default_edt_deg=4.4,
-    h3_features_path=_mtl('h3_complete_features_montreal.csv'),
-    baseline_path=_mtl('montreal_baseline_rsrp.csv'),
+    h3_features_path=_mtl_h3('h3_complete_features_montreal.csv'),
+    baseline_path=_mtl_model('montreal_baseline_rsrp.csv'),
     baseline_rsrp_col='baseline_rsrp',
     bad_bins_path=None,
-    urban_model_path=_mtl('lgbm_montreal_53feat_urban_model.joblib'),
-    suburban_model_path=_mtl('lgbm_montreal_53feat_suburban_model.joblib'),
-    urban_features_path=_mtl('lgbm_montreal_53feat_urban_features.json'),
-    suburban_features_path=_mtl('lgbm_montreal_53feat_suburban_features.json'),
+    urban_model_path=_mtl_model('lgbm_montreal_53feat_urban_model.joblib'),
+    suburban_model_path=_mtl_model('lgbm_montreal_53feat_suburban_model.joblib'),
+    urban_features_path=_mtl_model('lgbm_montreal_53feat_urban_features.json'),
+    suburban_features_path=_mtl_model('lgbm_montreal_53feat_suburban_features.json'),
     urban_poly_path=_mtl('urban_mtl.geojson'),
-    dsm_path=_mtl('h3_dsm_database_montreal.csv'),
-    dem_path=_mtl('h3_dem_database_montreal.csv'),
+    dsm_path=_mtl_h3('h3_dsm_database_montreal.csv'),
+    dem_path=_mtl_h3('h3_dem_database_montreal.csv'),
 )
 
 REGIONS = {

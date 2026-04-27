@@ -314,26 +314,27 @@ def baseline_coverage():
         return jsonify({'error': str(e)}), 500
 
 
-_site_sectors_cache = None
+_site_sectors_cache = {}
 
 def _get_site_sectors():
-    """Load Windsor antenna sector wedges from bundled GeoJSON (cached)."""
+    """Load antenna sector wedge polygons for the current region (cached per region)."""
     global _site_sectors_cache
-    if _site_sectors_cache is not None:
-        return _site_sectors_cache
-    geojson_path = Path(__file__).parent / 'data' / 'windsor_sectors.geojson'
+    region = _current_region_cfg.name
+    if region in _site_sectors_cache:
+        return _site_sectors_cache[region]
+    geojson_path = Path(__file__).parent / 'data' / f'{region}_sectors.geojson'
     if not geojson_path.exists():
-        _site_sectors_cache = {'type': 'FeatureCollection', 'features': []}
-        return _site_sectors_cache
+        _site_sectors_cache[region] = {'type': 'FeatureCollection', 'features': []}
+        return _site_sectors_cache[region]
     with open(geojson_path) as f:
-        _site_sectors_cache = json.load(f)
-    print(f'  OK Site sectors loaded: {len(_site_sectors_cache["features"])} sector polygons')
-    return _site_sectors_cache
+        _site_sectors_cache[region] = json.load(f)
+    print(f'  OK Site sectors loaded: {len(_site_sectors_cache[region]["features"])} sector polygons')
+    return _site_sectors_cache[region]
 
 
 @app.route('/api/site_sectors', methods=['GET'])
 def site_sectors():
-    """Return Windsor antenna sector wedge polygons as GeoJSON."""
+    """Return antenna sector wedge polygons as GeoJSON for the current region."""
     try:
         return jsonify(_get_site_sectors())
     except Exception as e:

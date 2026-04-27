@@ -1230,44 +1230,26 @@
             try {
                 if (sitesLayer) { map.removeLayer(sitesLayer); sitesLayer = null; }
 
-                if (_selectedRegion === 'windsor') {
-                    // Windsor: sector polygon GeoJSON
-                    const resp = await fetch('/api/site_sectors');
-                    const geojson = await resp.json();
-                    sitesLayer = L.geoJSON(geojson, {
-                        style: {
-                            fillColor: '#4b286d',
-                            fillOpacity: 0.45,
-                            color: '#4b286d',
-                            weight: 0.8,
-                            opacity: 0.7
-                        },
-                        onEachFeature: function(feature, layer) {
-                            const sid = feature.properties.SiteID || '';
-                            layer.bindPopup(`<strong>TELUS Site</strong><br>Site ID: <strong>${sid}</strong>`);
-                            layer.on('mouseover', () => layer.setStyle({ fillOpacity: 0.75, weight: 1.5 }));
-                            layer.on('mouseout',  () => layer.setStyle({ fillOpacity: 0.45, weight: 0.8 }));
-                        }
-                    }).addTo(map);
-                    const siteCount = new Set(geojson.features.map(f => f.properties.SiteID)).size;
-                    document.getElementById('sites-count').textContent = `(${siteCount})`;
-                    console.log(`Site sectors loaded: ${geojson.features.length} polygons, ${siteCount} sites`);
-                } else {
-                    // Montreal (and future regions): marker-based
-                    const resp = await fetch('/api/sites?region=' + _selectedRegion);
-                    const data = await resp.json();
-                    const sites = data.sites;
-                    sitesLayer = L.layerGroup(
-                        sites.map(s => L.marker([s.lat, s.lon], { icon: existingSiteIcon })
-                            .bindPopup(`<strong>TELUS Site</strong><br>
-                                Site ID: <strong>${s.site_id}</strong><br>
-                                Lat: ${s.lat.toFixed(5)}<br>
-                                Lon: ${s.lon.toFixed(5)}`)
-                        )
-                    ).addTo(map);
-                    document.getElementById('sites-count').textContent = `(${sites.length})`;
-                    console.log(`Sites loaded: ${sites.length}`);
-                }
+                const resp = await fetch('/api/site_sectors');
+                const geojson = await resp.json();
+                sitesLayer = L.geoJSON(geojson, {
+                    style: {
+                        fillColor: '#4b286d',
+                        fillOpacity: 0.45,
+                        color: '#4b286d',
+                        weight: 0.8,
+                        opacity: 0.7
+                    },
+                    onEachFeature: function(feature, layer) {
+                        const sid = feature.properties.SiteID || '';
+                        layer.bindPopup(`<strong>TELUS Site</strong><br>Site ID: <strong>${sid}</strong>`);
+                        layer.on('mouseover', () => layer.setStyle({ fillOpacity: 0.75, weight: 1.5 }));
+                        layer.on('mouseout',  () => layer.setStyle({ fillOpacity: 0.45, weight: 0.8 }));
+                    }
+                }).addTo(map);
+                const siteCount = new Set(geojson.features.map(f => f.properties.SiteID)).size;
+                document.getElementById('sites-count').textContent = `(${siteCount})`;
+                console.log(`Site sectors loaded: ${geojson.features.length} polygons, ${siteCount} sites`);
             } catch (err) {
                 console.error('Failed to load site sectors:', err);
             }
