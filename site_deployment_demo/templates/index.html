@@ -375,6 +375,20 @@
                         style="width:70px; padding:3px 6px; border:1px solid #ccc; border-radius:4px; font-size:13px;"
                         title="Leave blank to auto-detect from building/clutter height at click location">
                 </label>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                    <span>Azimuths (°):</span>
+                    <div style="display:flex; gap:4px;">
+                        <input type="number" id="az1" value="0"   min="0" max="359" step="1"
+                            style="width:48px; padding:3px 4px; border:1px solid #ccc; border-radius:4px; font-size:13px; text-align:center;"
+                            title="Sector 1 azimuth">
+                        <input type="number" id="az2" value="120" min="0" max="359" step="1"
+                            style="width:48px; padding:3px 4px; border:1px solid #ccc; border-radius:4px; font-size:13px; text-align:center;"
+                            title="Sector 2 azimuth">
+                        <input type="number" id="az3" value="240" min="0" max="359" step="1"
+                            style="width:48px; padding:3px 4px; border:1px solid #ccc; border-radius:4px; font-size:13px; text-align:center;"
+                            title="Sector 3 azimuth">
+                    </div>
+                </div>
                 <label id="model-variant-row" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                     <span>Model:</span>
                     <select id="model-variant" style="padding:3px 6px; border:1px solid #ccc; border-radius:4px; font-size:13px; background:#fff;">
@@ -1503,6 +1517,11 @@
             const manualHeight = manualHeightVal !== '' ? parseFloat(manualHeightVal) : null;
             const modelVariant = (document.getElementById('model-variant') || {value:'min5'}).value;
             const radiusKm     = parseFloat(document.getElementById('radius-slider').value) || 1;
+            const azimuths     = [
+                parseFloat(document.getElementById('az1').value) || 0,
+                parseFloat(document.getElementById('az2').value) || 120,
+                parseFloat(document.getElementById('az3').value) || 240,
+            ];
 
             console.log(`Site location clicked: (${lat.toFixed(4)}, ${lon.toFixed(4)}), downtilt=${edt}°, r=${radiusKm}km, height=${manualHeight !== null ? manualHeight + 'm' : 'auto'}`);
             
@@ -1537,6 +1556,7 @@
                         zoom: map.getZoom(),
                         model_variant: modelVariant,
                         region: _selectedRegion,
+                        azimuths: azimuths,
                         ...(manualHeight !== null ? { height: manualHeight } : {}),
                         radius: radiusKm * 1000
                     })

@@ -161,6 +161,8 @@ def predict_site():
         zoom          = int(data.get('zoom', 13))         # Leaflet zoom level
         model_variant = str(data.get('model_variant', 'min5'))  # 'standard' or 'min5'
         edt           = float(data.get('edt', 6))         # Electrical downtilt from UI
+        azimuths      = data.get('azimuths', [0, 120, 240])
+        azimuths      = [float(a) % 360 for a in azimuths[:3]]
         rs_power      = 43  # Hardcoded — RS power always 43 dBm, MDT always 0
 
         # Always use res-12 (full precision) — pycraf is now grouped by res-11 parents
@@ -182,6 +184,7 @@ def predict_site():
             h3_resolution=h3_res,
             model_variant=model_variant,
             edt=edt,
+            azimuths=azimuths,
         )
         
         # Add site location to response

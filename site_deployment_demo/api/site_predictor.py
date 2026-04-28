@@ -125,7 +125,8 @@ class SitePredictor:
 
     def predict_site_deployment(self, site_lat, site_lon, site_height=None,
                                 radius_m=1000, h3_resolution=10,
-                                model_variant='min5', edt=None):
+                                model_variant='min5', edt=None,
+                                azimuths=None):
         # Windsor model switching
         if self._router is None and model_variant in getattr(self, '_models', {}):
             self.model, self.features = self._models[model_variant]
@@ -152,11 +153,12 @@ class SitePredictor:
         print(f"  Site: height={site_height:.1f}m  RS={rs_power}dBm  "
               f"EDT={edt_val}°  radius={radius_m}m")
 
+        az_list = azimuths if azimuths is not None else [0, 120, 240]
         sectors = [
             {'name': f'Sector {i+1}', 'azimuth': az,
              'edt': edt_val, 'mdt': 0,
              'rs_power': rs_power, 'frequency': 2100, 'bandwidth': 20}
-            for i, az in enumerate([0, 120, 240])
+            for i, az in enumerate(az_list)
         ]
 
         predictions = self.engine.predict_site_coverage(
